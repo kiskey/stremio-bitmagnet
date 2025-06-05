@@ -5,11 +5,12 @@
 const config = require('./config');
 const { searchBitMagnet } = require('./utils/bitmagnet');
 const { getTmdbMetadata, searchTmdb } = require('./utils/tmdb');
+const { getOmdbMetadata } = require('./utils/omdb'); // Import the new OMDb utility
 const { getTrackers } = require('./utils/trackerFetcher'); // Import the new tracker fetcher
 const NodeCache = require('node-cache');
 
 // Initialize caches
-const tmdbCache = new NodeCache({ stdTTL: 3600, checkperiod: 120 }); // Cache TMDB responses for 1 hour
+const tmdbCache = new NodeCache({ stdTTL: 3600, checkperiod: 120 }); // Cache combined metadata responses for 1 hour
 const bitMagnetCache = new NodeCache({ stdTTL: 900, checkperiod: 60 }); // Cache BitMagnet responses for 15 mins
 
 /**
@@ -59,6 +60,58 @@ function getManifest() {
 }
 
 /**
+ * Helper function to fetch metadata from both TMDB and OMDb in parallel
+ * and combine/prioritize the results.
+ * @param {string} imdbId - The IMDb ID.
+ * @param {string} type - 'movie' or 'series'.
+ * @returns {object|null} Combined metadata object or null if none found.
+ */
+async function fetchCombinedMetadata(imdbId, type) {
+    const [tmdbResult, omdbResult] = await Promise.allSettled([
+        getTmdbMetadata(imdbId, type),
+        getOmdbMetadata(imdbId)
+    ]);
+
+    let tmdbData = tmdbResult.status === 'fulfilled' ? tmdbResult.value : null;
+    let omdbData = omdbResult.status === 'fulfilled' ? omdbResult.value : null;
+
+    // Prioritize TMDB data if available and has a title
+    if (tmdbData && (tmdbData.title || tmdbData.name)) {
+        console.log(`Metadata found (TMDB primary) for ${imdbId}.`);
+        return tmdbData;
+    }
+
+    // Fallback to OMDb data if TMDB failed or didn't provide enough info
+    if (omdbData && omdbData.Title) {
+        console.log(`Metadata found (OMDb fallback) for ${imdbId}.`);
+        // Map OMDb data to a structure similar to TMDB for consistency
+        return {
+            id: omdbData.imdbID,
+            title: omdbData.Title,
+            name: omdbData.Title, // Use name for series consistent with TMDB
+            release_date: omdbData.Released !== 'N/A' ? omdbData.Released : null, // For movies
+            first_air_date: omdbData.Released !== 'N/A' ? omdbData.Released : null, // For series
+            overview: omdbData.Plot !== 'N/A' ? omdbData.Plot : null,
+            genres: omdbData.Genre !== 'N/A' ? omdbData.Genre.split(', ').map(g => ({ name: g })) : [],
+            poster_path: omdbData.Poster !== 'N/A' ? omdbData.Poster : null,
+            // OMDb doesn't provide backdrop_path directly, set to null or use a placeholder
+            backdrop_path: null, 
+            runtime: omdbData.Runtime !== 'N/A' ? omdbData.Runtime : null,
+            vote_average: omdbData.imdbRating !== 'N/A' ? parseFloat(omdbData.imdbRating) : null,
+            // For series, need to manually construct seasons/episodes if OMDb provides 'totalSeasons'
+            // OMDb typically provides summary, not full episode list, so `videos` might be empty
+            seasons: omdbData.Type === 'series' && omdbData.totalSeasons !== 'N/A' 
+                ? Array.from({ length: parseInt(omdbData.totalSeasons) }, (_, i) => ({ season: i + 1 })) 
+                : undefined
+        };
+    }
+
+    console.warn(`No metadata found from TMDB or OMDb for ${imdbId}.`);
+    return null;
+}
+
+
+/**
  * Handles catalog requests.
  * Currently, it performs a TMDB search if a search query is provided,
  * otherwise, it can provide a list of popular items (placeholder for now).
@@ -76,7 +129,7 @@ async function getCatalog(type, id, extra) {
 
     if (search) {
         // Search TMDB first if a search query is provided
-        const tmdbResults = await searchTmdb(search, type);
+        const tmdbResults = await searchTmdb(search, type); // Still use searchTmdb, no OMDb search yet
         for (const tmdbItem of tmdbResults) {
             metas.push({
                 id: tmdbItem.imdb_id || `tt${tmdbItem.id}`, // Prefer IMDb ID if available
@@ -107,34 +160,34 @@ async function getCatalog(type, id, extra) {
  * @returns {object} Stremio meta response.
  */
 async function getMeta(type, id) {
-    // TMDB metadata for specific ID
-    const cacheKey = `tmdb_meta_${type}_${id}`;
-    let tmdbData = tmdbCache.get(cacheKey);
+    const cacheKey = `combined_meta_${type}_${id}`;
+    let combinedMetadata = tmdbCache.get(cacheKey);
 
-    if (!tmdbData) {
-        tmdbData = await getTmdbMetadata(id, type);
-        tmdbCache.set(cacheKey, tmdbData);
+    if (!combinedMetadata) {
+        combinedMetadata = await fetchCombinedMetadata(id, type);
+        if (combinedMetadata) {
+            tmdbCache.set(cacheKey, combinedMetadata);
+        }
     }
 
-    if (!tmdbData) {
-        console.warn(`No TMDB metadata found for ${id}`);
+    if (!combinedMetadata) {
+        console.warn(`No metadata found for ${id} from any source.`);
         return { meta: null };
     }
 
     const meta = {
         id: id,
         type: type,
-        name: tmdbData.title || tmdbData.name,
-        poster: tmdbData.poster_path ? `https://image.tmdb.org/t/p/w500${tmdbData.poster_path}` : null,
+        name: combinedMetadata.title || combinedMetadata.name,
+        poster: combinedMetadata.poster_path ? `https://image.tmdb.org/t/p/w500${combinedMetadata.poster_path}` : null,
         posterShape: 'regular',
-        background: tmdbData.backdrop_path ? `https://image.tmdb.org/t/p/original${tmdbData.backdrop_path}` : null,
-        description: tmdbData.overview,
-        genres: tmdbData.genres ? tmdbData.genres.map(g => g.name) : [],
-        releaseInfo: tmdbData.release_date ? tmdbData.release_date.substring(0, 4) : (tmdbData.first_air_date ? tmdbData.first_air_date.substring(0, 4) : ''),
-        runtime: tmdbData.runtime ? `${tmdbData.runtime} min` : undefined,
-        imdbRating: tmdbData.vote_average ? `${tmdbData.vote_average.toFixed(1)}/10` : undefined,
-        // For series, add seasons and episodes
-        videos: type === 'series' && tmdbData.seasons ? tmdbData.seasons.flatMap(season =>
+        background: combinedMetadata.backdrop_path ? `https://image.tmdb.org/t/p/original${combinedMetadata.backdrop_path}` : null,
+        description: combinedMetadata.overview,
+        genres: combinedMetadata.genres ? combinedMetadata.genres.map(g => g.name || g) : [], // Ensure genres are array of strings
+        releaseInfo: combinedMetadata.release_date ? combinedMetadata.release_date.substring(0, 4) : (combinedMetadata.first_air_date ? combinedMetadata.first_air_date.substring(0, 4) : ''),
+        runtime: combinedMetadata.runtime ? `${combinedMetadata.runtime} min` : undefined,
+        imdbRating: combinedMetadata.vote_average ? `${combinedMetadata.vote_average.toFixed(1)}/10` : undefined,
+        videos: type === 'series' && combinedMetadata.seasons ? combinedMetadata.seasons.flatMap(season =>
             season.episodes ? season.episodes.map(episode => ({
                 id: `${id}:${season.season}:${episode.episode_number}`,
                 season: season.season,
@@ -248,40 +301,40 @@ async function getStreams(type, id) {
         return { streams: cachedStreams };
     }
 
-    let tmdbData;
+    let combinedMetadata;
     try {
-        tmdbData = await getTmdbMetadata(imdbId, type);
+        combinedMetadata = await fetchCombinedMetadata(imdbId, type);
     } catch (error) {
-        console.error(`Error fetching TMDB metadata for ${imdbId}:`, error.message);
+        console.error(`Error fetching combined metadata for ${imdbId}:`, error.message);
         return { streams: [] };
     }
 
-    if (!tmdbData) {
-        console.warn(`No TMDB metadata found for ${imdbId}. Cannot search BitMagnet.`);
+    // Fallback if no metadata could be found at all.
+    // Use the raw IMDb ID as a search term if no title is available.
+    const titleForSearch = (combinedMetadata && (combinedMetadata.title || combinedMetadata.name)) ? 
+                           (combinedMetadata.title || combinedMetadata.name) : 
+                           imdbId;
+    const yearForSearch = (combinedMetadata && (combinedMetadata.release_date || combinedMetadata.first_air_date)) ? 
+                          parseInt((combinedMetadata.release_date || combinedMetadata.first_air_date).substring(0, 4), 10) : 
+                          null;
+    
+    // Ensure titleForSearch is not empty or just spaces
+    if (!titleForSearch || titleForSearch.trim() === '') {
+        console.warn(`No valid title could be determined for ${imdbId}. Cannot search BitMagnet.`);
         return { streams: [] };
     }
 
-    const title = tmdbData.title || tmdbData.name;
-    const year = tmdbData.release_date ? parseInt(tmdbData.release_date.substring(0, 4), 10) : (tmdbData.first_air_date ? parseInt(tmdbData.first_air_date.substring(0, 4), 10) : null);
-
-    if (!title) {
-        console.warn(`Could not determine title for ${id}.`);
-        return { streams: [] };
-    }
 
     let bitMagnetResults;
     try {
-        // Use title and year for BitMagnet search
-        // Note: BitMagnet's GraphQL API already sorts by seeders and size,
-        // which helps in getting better initial results before client-side sorting.
         bitMagnetResults = await searchBitMagnet({
-            queryString: title,
-            releaseYear: year,
+            queryString: titleForSearch,
+            releaseYear: yearForSearch,
             contentType: type === 'movie' ? 'movie' : 'tv_show',
         });
-        console.log(`Found ${bitMagnetResults.length} BitMagnet results for "${title}" (${year})`);
+        console.log(`Found ${bitMagnetResults.length} BitMagnet results for "${titleForSearch}" (${yearForSearch || 'Unknown Year'})`);
     } catch (error) {
-        console.error(`Error searching BitMagnet for ${title} (${year}):`, error.message);
+        console.error(`Error searching BitMagnet for ${titleForSearch} (${yearForSearch || 'Unknown Year'}):`, error.message);
         return { streams: [] };
     }
 
@@ -334,26 +387,37 @@ async function getStreams(type, id) {
         const streamName = `Bitmagnet-${resolutionForName}`;
 
         // Construct the Stremio 'title' field: "Content Title (Year)" or "SXXEXX Content Title"
-        let contentDisplayTitle = title; // From TMDB metadata
-        if (type === 'movie' && year) {
-            contentDisplayTitle += ` (${year})`;
-        } else if (type === 'series' && season && episode) {
-            contentDisplayTitle = `S${String(season).padStart(2, '0')}E${String(episode).padStart(2, '0')} ${contentDisplayTitle}`;
-        }
+        let baseContentTitle = (combinedMetadata && (combinedMetadata.title || combinedMetadata.name)) ? 
+                                (combinedMetadata.title || combinedMetadata.name) : 
+                                imdbId; // Use combined metadata title or fallback to imdbId
         
-        // New approach for streamTitle: combine all details into a single line
-        const combinedDetails = [];
+        let streamTitle;
+        if (type === 'movie' && (combinedMetadata && combinedMetadata.release_date)) {
+            const displayYear = combinedMetadata.release_date.substring(0, 4);
+            streamTitle = `${baseContentTitle} (${displayYear})`;
+        } else if (type === 'series' && season && episode) {
+            streamTitle = `S${String(season).padStart(2, '0')}E${String(episode).padStart(2, '0')} ${baseContentTitle}`;
+        } else {
+            streamTitle = baseContentTitle; // Fallback if year/season/episode not available or applicable
+        }
+
+        // Construct the Stremio 'description' field with multiple lines
+        const descriptionParts = [];
 
         // Quality: BluRay | HEVC | 10bit
         const qualityDetails = [];
         if (torrentContent.videoSource) qualityDetails.push(torrentContent.videoSource); // e.g., BluRay
         if (torrentContent.videoCodec) qualityDetails.push(torrentContent.videoCodec); // e.g., HEVC, x265
         if (torrentContent.videoModifier) qualityDetails.push(torrentContent.videoModifier); // e.g., REMUX, WEBRip
+        
+        // Check for '10bit' in torrent.tagNames or torrent.name
         if ((torrentContent.torrent.tagNames && torrentContent.torrent.tagNames.some(tag => tag.toLowerCase().includes('10bit'))) || torrentContent.torrent.name.toLowerCase().includes('10bit')) {
             qualityDetails.push('10bit');
         }
         if (qualityDetails.length > 0) {
-            combinedDetails.push(qualityDetails.join(' | '));
+            descriptionParts.push(`Quality: ${qualityDetails.join(' | ')}`);
+        } else {
+            descriptionParts.push('Quality: Unknown'); // Fallback for quality
         }
 
         // Size: 5.75 GiB | YTS
@@ -362,11 +426,11 @@ async function getStreams(type, id) {
         const knownSources = ['yts', 'dmm', 'rarbg', 'ettv']; // Add more as needed
         const sourceTag = torrentContent.torrent.tagNames?.find(tag => knownSources.includes(tag.toLowerCase()));
         if (sourceTag) {
-            sizeInfo += ` ${sourceTag.toUpperCase()}`;
+            sizeInfo += ` | ${sourceTag.toUpperCase()}`;
         }
-        combinedDetails.push(sizeInfo);
+        descriptionParts.push(sizeInfo);
 
-        // Audio: DD 5.1
+        // Audio: DD 5.1 (Infer from torrent name or tags if possible, otherwise generic)
         let audioQuality = 'Unknown Audio'; // Default
         const torrentNameLower = torrentContent.torrent.name.toLowerCase();
         if (torrentNameLower.includes('atmos')) audioQuality = 'Atmos';
@@ -379,22 +443,21 @@ async function getStreams(type, id) {
         else if (torrentNameLower.includes('dd 5.1') || torrentNameLower.includes('dolby digital 5.1')) audioQuality = 'DD 5.1';
         else if (torrentNameLower.includes('2.0') || torrentNameLower.includes('stereo')) audioQuality = 'Stereo';
         
-        combinedDetails.push(audioQuality);
+        descriptionParts.push(`Audio: ${audioQuality}`);
 
         // Language: Latino|English|Tamil
         if (torrentContent.languages && torrentContent.languages.length > 0) {
-            combinedDetails.push(torrentContent.languages.map(lang => lang.name.toUpperCase()).join('|'));
+            descriptionParts.push(`Language: ${torrentContent.languages.map(lang => lang.name.toUpperCase()).join('|')}`);
         } else {
-            combinedDetails.push('Unknown Language');
+            descriptionParts.push('Language: Unknown');
         }
         
         // Seeders: 8
         if (torrentContent.seeders !== undefined) {
-            combinedDetails.push(`S:${torrentContent.seeders}`);
+            descriptionParts.push(`Seeders: ${torrentContent.seeders}`);
         }
 
-        // Combine content title and detailed info for the final stream.title
-        const finalStreamTitle = `${contentDisplayTitle} [${combinedDetails.join(' | ')}]`;
+        const streamDescription = descriptionParts.join('\n'); // Join with newline characters
 
         let parsedMagnet;
         // The infoHash from BitMagnet's GraphQL response is guaranteed to be present and reliable.
@@ -441,8 +504,8 @@ async function getStreams(type, id) {
         return {
             infoHash: torrentContent.infoHash, // Always use BitMagnet's infoHash for the primary stream object
             name: streamName, // "Bitmagnet-{Resolution}"
-            title: finalStreamTitle, // Combined detailed title
-            // Removed 'description' field to simplify
+            title: streamTitle, // "Content Title (Year)" or "SXXEXX Content Title"
+            description: streamDescription, // Detailed multi-line description
             type: torrentContent.contentType, // Optional, but provides useful info for Stremio UI
             quality: torrentContent.videoResolution ? torrentContent.videoResolution.replace('V', '') : 'Unknown', // Optional, provides useful info for Stremio UI
             seeders: torrentContent.seeders, // Optional, provides useful info for Stremio UI
