@@ -399,18 +399,20 @@ async function getStreams(type, id) {
             infoHash: torrentContent.infoHash, // Always use BitMagnet's infoHash for the primary stream object
             name: nameParts.join(' | '), // This is what shows up as the torrent name in Stremio
             title: streamTitle.trim(), // This is the user-facing quality label
-            type: torrentContent.contentType,
-            quality: torrentContent.videoResolution ? torrentContent.videoResolution.replace('V', '') : 'Unknown',
-            seeders: torrentContent.seeders,
-            url: torrentContent.torrent.magnetUri,
+            type: torrentContent.contentType, // Optional, but provides useful info for Stremio UI
+            quality: torrentContent.videoResolution ? torrentContent.videoResolution.replace('V', '') : 'Unknown', // Optional, provides useful info for Stremio UI
+            seeders: torrentContent.seeders, // Optional, provides useful info for Stremio UI
+            // Removed 'url' property as per comparison with working Jackett addon.
+            // Stremio will construct the magnet link internally from infoHash and sources.
             sources: sources, // Add the extracted and combined trackers
             behaviorHints: {
                 bittorrent: true, // Explicitly tell Stremio this is a P2P torrent
-                proxyHeaders: {
-                    request: {
-                        seedtime: 3600 // Seed for 1 hour after watching
-                    }
-                }
+                // Removed 'proxyHeaders' property as it might cause conflicts for bittorrent streams.
+                // proxyHeaders: {
+                //     request: {
+                //         seedtime: 3600 // Seed for 1 hour after watching
+                //     }
+                // }
             }
         };
     });
