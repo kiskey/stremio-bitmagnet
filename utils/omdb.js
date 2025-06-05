@@ -7,7 +7,7 @@ const NodeCache = require('node-cache');
 
 const omdbApiCache = new NodeCache({ stdTTL: 86400, checkperiod: 120 }); // Cache OMDb API calls for 24 hours
 
-const OMDB_BASE_URL = '[http://www.omdbapi.com/](http://www.omdbapi.com/)';
+const OMDB_BASE_URL = 'http://www.omdbapi.com/'; // Corrected URL: removed Markdown link formatting
 
 /**
  * Fetches OMDb metadata for a given IMDb ID.
