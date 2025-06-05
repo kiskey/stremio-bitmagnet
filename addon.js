@@ -337,9 +337,6 @@ async function getStreams(type, id) {
         // This will be the prominent display text for the stream.
         const streamTitleParts = [];
 
-        // Prepend "Stremio-BitMagnet" as requested by the user for clarity
-        streamTitleParts.push('Stremio-BitMagnet');
-
         // 1. Movie/Series Title and Year/Season/Episode
         let contentDisplayTitle = title; // This is the movie/series title from TMDB metadata
         if (type === 'movie' && year) {
