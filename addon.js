@@ -356,24 +356,25 @@ async function getStreams(type, id) {
         }
 
         let parsedMagnet;
-        // Start with infoHash from BitMagnet, which is guaranteed to be present as per schema
+        // The infoHash from BitMagnet's GraphQL response is guaranteed to be present and reliable.
+        // This is the primary source for the DHT part of the 'sources'.
         const bitmagnetInfoHash = torrentContent.infoHash;
         let dhtInfoHash = bitmagnetInfoHash ? String(bitmagnetInfoHash).toLowerCase() : '';
 
         let announceTrackers = []; // Trackers from the magnet URI
 
         try {
-            // Attempt to parse magnet URI to get additional trackers
+            // Attempt to parse magnet URI to get additional trackers that might be embedded.
+            // This is secondary to the fetched public trackers and BitMagnet's infoHash.
             parsedMagnet = parseTorrent(torrentContent.torrent.magnetUri);
             if (parsedMagnet && Array.isArray(parsedMagnet.announce)) {
                 announceTrackers = parsedMagnet.announce;
-                // Double-check: if parse-torrent also provides an infoHash, use it for DHT if BitMagnet's was missing.
-                // However, per schema, BitMagnet's infoHash is always available, so prioritizing it is fine.
-                // This logic mostly ensures announce trackers are correctly extracted.
             } else {
+                // This warning indicates the magnet URI did not contain embedded announce URLs, which is fine.
                 console.warn(`parse-torrent could not extract announce URLs from magnet URI for ${torrentContent.infoHash}.`);
             }
         } catch (e) {
+            // Log if parsing the magnet URI throws an error, but don't halt the stream creation.
             console.error(`Error parsing magnet URI for ${torrentContent.infoHash}:`, e.message);
             // In case of error, announceTrackers remains an empty array
         }
@@ -385,7 +386,7 @@ async function getStreams(type, id) {
             ...publicTrackers.map(t => `tracker:${t}`)
         ]);
         
-        // Add DHT source if infoHash is available
+        // Add DHT source if infoHash is available (it always should be from BitMagnet)
         if (dhtInfoHash) {
             allTrackers.add(`dht:${dhtInfoHash}`);
         } else {
