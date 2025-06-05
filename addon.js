@@ -293,7 +293,7 @@ async function getStreams(type, id) {
     // Filter results for TV shows by season and episode
     let relevantTorrents = bitMagnetResults;
     if (type === 'series' && season && episode) {
-        relevantTorrents = bitMagnetResults.filter(torrentContent => {
+        relevantTorrents = relevantTorrents.filter(torrentContent => {
             if (!torrentContent.episodes) {
                 return false;
             }
@@ -351,27 +351,50 @@ async function getStreams(type, id) {
             streamTitle = torrentContent.torrent.name || 'Unknown Quality';
         }
 
-        // Extract trackers from the magnet URI
         let parsedMagnet;
+        // Start with infoHash from BitMagnet, which is guaranteed to be present as per schema
+        const bitmagnetInfoHash = torrentContent.infoHash;
+        let dhtInfoHash = bitmagnetInfoHash ? String(bitmagnetInfoHash).toLowerCase() : '';
+
+        let announceTrackers = []; // Trackers from the magnet URI
+
         try {
-            // Using dynamically imported parseTorrent
+            // Attempt to parse magnet URI to get additional trackers
             parsedMagnet = parseTorrent(torrentContent.torrent.magnetUri);
+            if (parsedMagnet && Array.isArray(parsedMagnet.announce)) {
+                announceTrackers = parsedMagnet.announce;
+                // Double-check: if parse-torrent also provides an infoHash, use it for DHT if BitMagnet's was missing.
+                // However, per schema, BitMagnet's infoHash is always available, so prioritizing it is fine.
+                // This logic mostly ensures announce trackers are correctly extracted.
+            } else {
+                console.warn(`parse-torrent could not extract announce URLs from magnet URI for ${torrentContent.infoHash}.`);
+            }
         } catch (e) {
             console.error(`Error parsing magnet URI for ${torrentContent.infoHash}:`, e.message);
-            parsedMagnet = { infoHash: torrentContent.infoHash, announce: [] }; // Fallback
+            // In case of error, announceTrackers remains an empty array
         }
 
-        const sources = (parsedMagnet.announce || []).map(x => `tracker:${x}`).concat([`dht:${parsedMagnet.infoHash.toLowerCase()}`]);
+        // Combine trackers from magnet URI and best public trackers, ensuring uniqueness
+        const allTrackers = new Set([...announceTrackers.map(t => `tracker:${t}`), ...config.BEST_PUBLIC_TRACKERS.map(t => `tracker:${t}`)]);
+        
+        // Add DHT source if infoHash is available
+        if (dhtInfoHash) {
+            allTrackers.add(`dht:${dhtInfoHash}`);
+        } else {
+            console.warn(`Missing infoHash for torrentContent ID: ${torrentContent.id}. DHT source will be omitted.`);
+        }
+
+        const sources = Array.from(allTrackers);
 
         return {
-            infoHash: torrentContent.infoHash,
+            infoHash: torrentContent.infoHash, // Always use BitMagnet's infoHash for the primary stream object
             name: nameParts.join(' | '), // This is what shows up as the torrent name in Stremio
             title: streamTitle.trim(), // This is the user-facing quality label
             type: torrentContent.contentType,
             quality: torrentContent.videoResolution ? torrentContent.videoResolution.replace('V', '') : 'Unknown',
             seeders: torrentContent.seeders,
             url: torrentContent.torrent.magnetUri,
-            sources: sources, // Add the extracted trackers
+            sources: sources, // Add the extracted and combined trackers
             behaviorHints: {
                 bittorrent: true,
                 proxyHeaders: {
