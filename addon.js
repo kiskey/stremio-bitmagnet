@@ -78,14 +78,37 @@ async function fetchCombinedMetadata(imdbId, type) {
     // Prioritize TMDB data if available and has a title/name
     if (tmdbData && (tmdbData.title || tmdbData.name)) {
         console.log(`Metadata found (TMDB primary) for ${imdbId}.`);
-        return tmdbData;
+        // Ensure TMDB data also has a 'year' property derived from its dates for consistency
+        const tmdbYear = tmdbData.release_date ? parseInt(tmdbData.release_date.substring(0, 4), 10) :
+                         (tmdbData.first_air_date ? parseInt(tmdbData.first_air_date.substring(0, 4), 10) : null);
+        return { ...tmdbData, year: tmdbYear };
     }
 
     // Fallback to OMDb data if TMDB failed or didn't provide enough info
     if (omdbData && omdbData.Title && omdbData.Response === 'True') {
         console.log(`Metadata found (OMDb fallback) for ${imdbId}.`);
         // Map OMDb data to a structure similar to TMDB for consistency
-        const releaseYear = omdbData.Year && omdbData.Year !== 'N/A' ? parseInt(omdbData.Year.match(/\d{4}/)?.[0], 10) : null;
+        let omdbYear = null;
+        // Prioritize parsing from 'Released' field as it's a full date string, which is more reliable for exact year.
+        if (omdbData.Released && omdbData.Released !== 'N/A') {
+            try {
+                const releaseDate = new Date(omdbData.Released);
+                if (!isNaN(releaseDate.getFullYear())) { // Check if it's a valid date
+                    omdbYear = releaseDate.getFullYear();
+                }
+            } catch (e) {
+                console.warn(`Could not parse OMDb Released date "${omdbData.Released}":`, e.message);
+            }
+        }
+        
+        // If year couldn't be derived from 'Released', try 'Year' field
+        if (omdbYear === null && omdbData.Year && omdbData.Year !== 'N/A') {
+            const yearMatch = omdbData.Year.match(/\d{4}/); // This regex gets the first four digits
+            if (yearMatch) {
+                omdbYear = parseInt(yearMatch[0], 10);
+            }
+        }
+        
         const genres = omdbData.Genre && omdbData.Genre !== 'N/A' ? omdbData.Genre.split(', ').map(g => ({ name: g })) : [];
         const runtime = omdbData.Runtime && omdbData.Runtime !== 'N/A' && omdbData.Runtime !== '0 min' ? omdbData.Runtime : null;
         const imdbRating = omdbData.imdbRating && omdbData.imdbRating !== 'N/A' ? parseFloat(omdbData.imdbRating) : null;
@@ -96,6 +119,7 @@ async function fetchCombinedMetadata(imdbId, type) {
             name: omdbData.Title, // Use name for series consistent with TMDB
             release_date: omdbData.Released && omdbData.Released !== 'N/A' ? omdbData.Released : null, // For movies
             first_air_date: omdbData.Released && omdbData.Released !== 'N/A' ? omdbData.Released : null, // For series
+            year: omdbYear, // Explicitly parsed year
             overview: omdbData.Plot && omdbData.Plot !== 'N/A' ? omdbData.Plot : null,
             genres: genres, 
             poster_path: omdbData.Poster && omdbData.Poster !== 'N/A' ? omdbData.Poster : null,
@@ -322,12 +346,12 @@ async function getStreams(type, id) {
     
     let yearForSearch = null;
     if (combinedMetadata) {
-        if (combinedMetadata.release_date) {
+        if (combinedMetadata.year) { // Prioritize the explicitly parsed year from combinedMetadata
+            yearForSearch = combinedMetadata.year;
+        } else if (combinedMetadata.release_date) {
             yearForSearch = parseInt(combinedMetadata.release_date.substring(0, 4), 10);
         } else if (combinedMetadata.first_air_date) {
             yearForSearch = parseInt(combinedMetadata.first_air_date.substring(0, 4), 10);
-        } else if (combinedMetadata.Year) { // OMDb specific, assuming already parsed to year
-            yearForSearch = parseInt(combinedMetadata.Year.match(/\d{4}/)?.[0], 10);
         }
     }
     
@@ -405,9 +429,10 @@ async function getStreams(type, id) {
                                 imdbId; // Use combined metadata title or fallback to imdbId
         
         let streamTitle;
-        if (type === 'movie' && (combinedMetadata && (combinedMetadata.release_date || combinedMetadata.Year))) {
-            const displayYear = combinedMetadata.release_date ? combinedMetadata.release_date.substring(0, 4) : 
-                                (combinedMetadata.Year ? combinedMetadata.Year.match(/\d{4}/)?.[0] : null);
+        if (type === 'movie' && (combinedMetadata && (combinedMetadata.year || combinedMetadata.release_date || combinedMetadata.Year))) {
+            const displayYear = combinedMetadata.year || 
+                                (combinedMetadata.release_date ? combinedMetadata.release_date.substring(0, 4) : 
+                                (combinedMetadata.Year ? combinedMetadata.Year.match(/\d{4}/)?.[0] : null));
             streamTitle = `${baseContentTitle} (${displayYear})`;
         } else if (type === 'series' && season && episode) {
             streamTitle = `S${String(season).padStart(2, '0')}E${String(episode).padStart(2, '0')} ${baseContentTitle}`;
