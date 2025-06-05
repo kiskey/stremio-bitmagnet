@@ -98,7 +98,7 @@ async function searchBitMagnet({ queryString, contentType, releaseYear }) {
         return [];
     }
 
-    // Sanitize the query string before sending it to BitMagnet
+    // Sanitized query string for BitMagnet
     const sanitizedQueryString = sanitizeTitle(queryString);
 
     const variables = {
@@ -111,12 +111,15 @@ async function searchBitMagnet({ queryString, contentType, releaseYear }) {
             ],
             facets: {
                 contentType: { filter: contentType ? [contentType] : [] },
-                // Convert releaseYear to string as the Year scalar might expect a string
-                releaseYear: { filter: releaseYear ? [String(releaseYear)] : [] }
             },
             cached: true // Explicitly request cached results from BitMagnet if available
         }
     };
+
+    // Conditionally add releaseYear to facets if it's provided and valid
+    if (releaseYear !== null && !isNaN(releaseYear)) {
+        variables.input.facets.releaseYear = { filter: [String(releaseYear)] };
+    }
 
     try {
         console.log('Sending GraphQL query to BitMagnet with variables:', JSON.stringify(variables, null, 2)); // Log full payload
