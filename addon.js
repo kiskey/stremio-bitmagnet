@@ -75,32 +75,35 @@ async function fetchCombinedMetadata(imdbId, type) {
     let tmdbData = tmdbResult.status === 'fulfilled' ? tmdbResult.value : null;
     let omdbData = omdbResult.status === 'fulfilled' ? omdbResult.value : null;
 
-    // Prioritize TMDB data if available and has a title
+    // Prioritize TMDB data if available and has a title/name
     if (tmdbData && (tmdbData.title || tmdbData.name)) {
         console.log(`Metadata found (TMDB primary) for ${imdbId}.`);
         return tmdbData;
     }
 
     // Fallback to OMDb data if TMDB failed or didn't provide enough info
-    if (omdbData && omdbData.Title) {
+    if (omdbData && omdbData.Title && omdbData.Response === 'True') {
         console.log(`Metadata found (OMDb fallback) for ${imdbId}.`);
         // Map OMDb data to a structure similar to TMDB for consistency
+        const releaseYear = omdbData.Year && omdbData.Year !== 'N/A' ? parseInt(omdbData.Year.match(/\d{4}/)?.[0], 10) : null;
+        const genres = omdbData.Genre && omdbData.Genre !== 'N/A' ? omdbData.Genre.split(', ').map(g => ({ name: g })) : [];
+        const runtime = omdbData.Runtime && omdbData.Runtime !== 'N/A' && omdbData.Runtime !== '0 min' ? omdbData.Runtime : null;
+        const imdbRating = omdbData.imdbRating && omdbData.imdbRating !== 'N/A' ? parseFloat(omdbData.imdbRating) : null;
+
         return {
             id: omdbData.imdbID,
             title: omdbData.Title,
             name: omdbData.Title, // Use name for series consistent with TMDB
-            release_date: omdbData.Released !== 'N/A' ? omdbData.Released : null, // For movies
-            first_air_date: omdbData.Released !== 'N/A' ? omdbData.Released : null, // For series
-            overview: omdbData.Plot !== 'N/A' ? omdbData.Plot : null,
-            genres: omdbData.Genre !== 'N/A' ? omdbData.Genre.split(', ').map(g => ({ name: g })) : [],
-            poster_path: omdbData.Poster !== 'N/A' ? omdbData.Poster : null,
-            // OMDb doesn't provide backdrop_path directly, set to null or use a placeholder
-            backdrop_path: null, 
-            runtime: omdbData.Runtime !== 'N/A' ? omdbData.Runtime : null,
-            vote_average: omdbData.imdbRating !== 'N/A' ? parseFloat(omdbData.imdbRating) : null,
-            // For series, need to manually construct seasons/episodes if OMDb provides 'totalSeasons'
-            // OMDb typically provides summary, not full episode list, so `videos` might be empty
-            seasons: omdbData.Type === 'series' && omdbData.totalSeasons !== 'N/A' 
+            release_date: omdbData.Released && omdbData.Released !== 'N/A' ? omdbData.Released : null, // For movies
+            first_air_date: omdbData.Released && omdbData.Released !== 'N/A' ? omdbData.Released : null, // For series
+            overview: omdbData.Plot && omdbData.Plot !== 'N/A' ? omdbData.Plot : null,
+            genres: genres, 
+            poster_path: omdbData.Poster && omdbData.Poster !== 'N/A' ? omdbData.Poster : null,
+            backdrop_path: null, // OMDb doesn't provide backdrop_path directly
+            runtime: runtime,
+            vote_average: imdbRating,
+            // For series, if totalSeasons is available from OMDb, create dummy seasons for structure
+            seasons: omdbData.Type === 'series' && omdbData.totalSeasons && omdbData.totalSeasons !== 'N/A' && parseInt(omdbData.totalSeasons) > 0
                 ? Array.from({ length: parseInt(omdbData.totalSeasons) }, (_, i) => ({ season: i + 1 })) 
                 : undefined
         };
@@ -188,7 +191,9 @@ async function getMeta(type, id) {
         runtime: combinedMetadata.runtime ? `${combinedMetadata.runtime} min` : undefined,
         imdbRating: combinedMetadata.vote_average ? `${combinedMetadata.vote_average.toFixed(1)}/10` : undefined,
         videos: type === 'series' && combinedMetadata.seasons ? combinedMetadata.seasons.flatMap(season =>
-            season.episodes ? season.episodes.map(episode => ({
+            // Check if episodes exist for the season object in combinedMetadata
+            // OMDb might not provide episodes, so only map if available.
+            (season.episodes && Array.isArray(season.episodes)) ? season.episodes.map(episode => ({
                 id: `${id}:${season.season}:${episode.episode_number}`,
                 season: season.season,
                 episode: episode.episode_number,
@@ -314,9 +319,17 @@ async function getStreams(type, id) {
     const titleForSearch = (combinedMetadata && (combinedMetadata.title || combinedMetadata.name)) ? 
                            (combinedMetadata.title || combinedMetadata.name) : 
                            imdbId;
-    const yearForSearch = (combinedMetadata && (combinedMetadata.release_date || combinedMetadata.first_air_date)) ? 
-                          parseInt((combinedMetadata.release_date || combinedMetadata.first_air_date).substring(0, 4), 10) : 
-                          null;
+    
+    let yearForSearch = null;
+    if (combinedMetadata) {
+        if (combinedMetadata.release_date) {
+            yearForSearch = parseInt(combinedMetadata.release_date.substring(0, 4), 10);
+        } else if (combinedMetadata.first_air_date) {
+            yearForSearch = parseInt(combinedMetadata.first_air_date.substring(0, 4), 10);
+        } else if (combinedMetadata.Year) { // OMDb specific, assuming already parsed to year
+            yearForSearch = parseInt(combinedMetadata.Year.match(/\d{4}/)?.[0], 10);
+        }
+    }
     
     // Ensure titleForSearch is not empty or just spaces
     if (!titleForSearch || titleForSearch.trim() === '') {
@@ -392,8 +405,9 @@ async function getStreams(type, id) {
                                 imdbId; // Use combined metadata title or fallback to imdbId
         
         let streamTitle;
-        if (type === 'movie' && (combinedMetadata && combinedMetadata.release_date)) {
-            const displayYear = combinedMetadata.release_date.substring(0, 4);
+        if (type === 'movie' && (combinedMetadata && (combinedMetadata.release_date || combinedMetadata.Year))) {
+            const displayYear = combinedMetadata.release_date ? combinedMetadata.release_date.substring(0, 4) : 
+                                (combinedMetadata.Year ? combinedMetadata.Year.match(/\d{4}/)?.[0] : null);
             streamTitle = `${baseContentTitle} (${displayYear})`;
         } else if (type === 'series' && season && episode) {
             streamTitle = `S${String(season).padStart(2, '0')}E${String(episode).padStart(2, '0')} ${baseContentTitle}`;
