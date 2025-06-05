@@ -1,0 +1,145 @@
+// config.js
+// Configuration variables for the addon, loaded from environment variables.
+
+module.exports = {
+    BITMAGNET_GRAPHQL_ENDPOINT: process.env.BITMAGNET_GRAPHQL_ENDPOINT || '[https://b.mjlan.duckdns.org/graphql](https://b.mjlan.duckdns.org/graphql)',
+    TMDB_API_KEY: process.env.TMDB_API_KEY || 'YOUR_TMDB_API_KEY_HERE', // IMPORTANT: Replace with a real TMDB API Key
+    // TMDB_API_KEY: process.env.TMDB_API_KEY || '', // For local testing, if TMDB_API_KEY is not set in environment
+    // Note: In a production Docker setup, this should always be set via environment variables.
+
+    MAX_STREAMS_PER_ITEM: process.env.MAX_STREAMS_PER_ITEM || '10', // Max number of streams to return per item, configurable
+};
+```javascript
+// utils/bitmagnet.js
+// Utility functions for interacting with the BitMagnet GraphQL API.
+
+const axios = require('axios');
+const config = require('../config');
+
+// GraphQL query for torrent content search
+const BITMAGNET_SEARCH_QUERY = `
+fragment TorrentContentFields on TorrentContent {
+  id
+  infoHash
+  contentType
+  title
+  languages {
+    id
+    name
+  }
+  episodes {
+    label
+    seasons {
+      season
+      episodes
+    }
+  }
+  video3d
+  videoCodec
+  videoModifier
+  videoResolution
+  videoSource
+  releaseGroup
+  seeders
+  leechers
+  publishedAt
+  torrent {
+    name
+    size
+    fileType
+    tagNames
+    magnetUri
+  }
+  content {
+    source
+    id
+    title
+    releaseYear
+    runtime
+    overview
+    externalLinks {
+      url
+    }
+    originalLanguage {
+      id
+      name
+    }
+  }
+}
+
+query TorrentContentSearch($input: TorrentContentSearchQueryInput!) {
+  torrentContent {
+    search(input: $input) {
+      items {
+        ...TorrentContentFields
+      }
+      totalCount
+      hasNextPage
+    }
+  }
+}
+`;
+
+/**
+ * Searches the BitMagnet GraphQL API for torrent content.
+ * @param {object} params - Search parameters.
+ * @param {string} params.queryString - The search query string (e.g., movie title).
+ * @param {string} [params.contentType] - 'movie' or 'tv_show'.
+ * @param {number} [params.releaseYear] - Release year.
+ * @returns {Array<object>} An array of torrent content objects.
+ */
+async function searchBitMagnet({ queryString, contentType, releaseYear }) {
+    if (!config.BITMAGNET_GRAPHQL_ENDPOINT) {
+        console.error('BITMAGNET_GRAPHQL_ENDPOINT is not configured.');
+        return [];
+    }
+
+    const variables = {
+        input: {
+            queryString: queryString,
+            limit: 50, // Fetch more than 10 to allow for client-side filtering/sorting
+            orderBy: [
+                { field: 'seeders', descending: true },
+                { field: 'size', descending: true }
+            ],
+            facets: {
+                contentType: { filter: contentType ? [contentType] : [] },
+                releaseYear: { filter: releaseYear ? [releaseYear] : [] }
+            }
+        }
+    };
+
+    try {
+        const response = await axios.post(
+            config.BITMAGNET_GRAPHQL_ENDPOINT,
+            {
+                query: BITMAGNET_SEARCH_QUERY,
+                variables: variables,
+            },
+            {
+                headers: {
+                    'Content-Type': 'application/json',
+                    'User-Agent': 'Stremio-BitMagnet-Addon/1.0', // Custom User-Agent
+                },
+                timeout: 15000, // 15 seconds timeout
+            }
+        );
+
+        if (response.data.errors) {
+            console.error('BitMagnet GraphQL errors:', response.data.errors);
+            return [];
+        }
+
+        return response.data.data.torrentContent.search.items || [];
+    } catch (error) {
+        console.error('Error searching BitMagnet:', error.message);
+        if (error.response) {
+            console.error('BitMagnet API Response Error:', error.response.status, error.response.data);
+        }
+        return [];
+    }
+}
+
+module.exports = {
+    searchBitMagnet,
+};
