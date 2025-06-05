@@ -361,21 +361,53 @@ async function getStreams(type, id) {
         return { streams: [] };
     }
 
+    let bitMagnetResults = [];
+    const seenInfoHashes = new Set();
 
-    let bitMagnetResults;
+    // Strategy 1: Broad Search Term (title + year in queryString, no year filter in facets)
+    // This often yields better results if BitMagnet's internal indexing isn't strict on year facets.
+    const broadQueryString = yearForSearch ? `${titleForSearch} ${yearForSearch}` : titleForSearch;
     try {
-        bitMagnetResults = await searchBitMagnet({
-            queryString: titleForSearch,
-            releaseYear: yearForSearch,
+        const broadResults = await searchBitMagnet({
+            queryString: broadQueryString,
             contentType: type === 'movie' ? 'movie' : 'tv_show',
+            // Do NOT include releaseYear filter here for a broader search
+            releaseYear: null // Explicitly set to null to avoid filtering
         });
-        console.log(`Found ${bitMagnetResults.length} BitMagnet results for "${titleForSearch}" (${yearForSearch || 'Unknown Year'})`);
+        console.log(`Broad search for "${broadQueryString}" (${yearForSearch || 'Unknown Year'}) found ${broadResults.length} results.`);
+        broadResults.forEach(item => {
+            if (!seenInfoHashes.has(item.infoHash)) {
+                bitMagnetResults.push(item);
+                seenInfoHashes.add(item.infoHash);
+            }
+        });
     } catch (error) {
-        console.error(`Error searching BitMagnet for ${titleForSearch} (${yearForSearch || 'Unknown Year'}):`, error.message);
-        return { streams: [] };
+        console.error(`Error in broad BitMagnet search for "${broadQueryString}":`, error.message);
     }
 
-    if (!bitMagnetResults || bitMagnetResults.length === 0) {
+    // Strategy 2: Fallback with Year Filter (only if no results from broad search, or if year was available)
+    if (bitMagnetResults.length === 0 && yearForSearch !== null) {
+        try {
+            const fallbackResults = await searchBitMagnet({
+                queryString: titleForSearch, // Just the title
+                releaseYear: yearForSearch, // Use the specific year filter
+                contentType: type === 'movie' ? 'movie' : 'tv_show',
+            });
+            console.log(`Fallback search for "${titleForSearch}" with year ${yearForSearch} found ${fallbackResults.length} results.`);
+            fallbackResults.forEach(item => {
+                if (!seenInfoHashes.has(item.infoHash)) {
+                    bitMagnetResults.push(item);
+                    seenInfoHashes.add(item.infoHash);
+                }
+            });
+        } catch (error) {
+            console.error(`Error in fallback BitMagnet search for "${titleForSearch}" (${yearForSearch}):`, error.message);
+        }
+    }
+    
+    // Final check after all strategies
+    if (bitMagnetResults.length === 0) {
+        console.log(`No BitMagnet results found for "${titleForSearch}" (${yearForSearch || 'Unknown Year'}) after all strategies.`);
         return { streams: [] };
     }
 
