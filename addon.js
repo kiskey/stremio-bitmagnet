@@ -301,66 +301,133 @@ function calculateQualityScore(torrentContent) {
  * @returns {{season: number|null, episodes: number[]}|null} Parsed season and episode numbers, or null if not found.
  */
 function parseTorrentEpisodeData(torrentName, torrentContentEpisodes) {
-    let season = null;
-    let episodes = [];
+    const parsedData = [];
+    const seenCombos = new Set(); // To avoid duplicates if multiple regexes match the same thing
 
-    // Prioritize BitMagnet's structured episodes if available and usable
-    if (torrentContentEpisodes && torrentContentEpisodes.seasons && Array.isArray(torrentContentEpisodes.seasons)) {
-        // Find the first season that has a defined season number
-        const primarySeasonData = torrentContentEpisodes.seasons.find(s => s.season !== null && s.season !== undefined);
-        if (primarySeasonData) {
-            season = primarySeasonData.season;
-            if (primarySeasonData.episodes && Array.isArray(primarySeasonData.episodes) && primarySeasonData.episodes.length > 0) {
-                episodes = primarySeasonData.episodes;
-            }
-            // If structured episodes are found, use them and don't re-parse from name
-            return { season, episodes };
+    // Helper to add data if unique
+    const addData = (s, eps) => {
+        // Ensure episodes are sorted and unique for consistent key generation
+        const uniqueSortedEps = [...new Set(eps)].sort((a, b) => a - b);
+        const key = `${s}-${JSON.stringify(uniqueSortedEps)}`;
+        if (!seenCombos.has(key)) {
+            parsedData.push({ season: s, episodes: uniqueSortedEps });
+            seenCombos.add(key);
         }
+    };
+
+    // 1. Prioritize BitMagnet's structured episodes
+    if (torrentContentEpisodes && Array.isArray(torrentContentEpisodes.seasons)) {
+        torrentContentEpisodes.seasons.forEach(sData => {
+            if (sData.season !== null && sData.season !== undefined) {
+                const s = sData.season;
+                const eps = (sData.episodes && Array.isArray(sData.episodes)) ? sData.episodes : [];
+                addData(s, eps);
+            }
+        });
+        // If structured data exists, prefer it and don't proceed with name parsing
+        // This is a design choice. If you want to augment structured data with name parsing, remove this return.
+        if (parsedData.length > 0) return parsedData;
     }
 
-    // Fallback to parsing from torrent name or episodes label if structured data is insufficient
-    const nameToParse = torrentContentEpisodes && torrentContentEpisodes.label ? torrentContentEpisodes.label : torrentName;
-    const nameLower = nameToParse.toLowerCase();
+    const nameLower = torrentName.toLowerCase();
 
-    // Regex for SXXEXX (e.g., S01E15) - finds first occurrence
-    const sxeMatch = nameLower.match(/s(\d{1,3})e(\d{1,3})/);
-    if (sxeMatch) {
-        season = parseInt(sxeMatch[1], 10);
-        episodes.push(parseInt(sxeMatch[2], 10));
-    } else {
-        // Regex for SXXEP(YY-ZZ) or SXXEPYY-ZZ (e.g., S01EP(13-16) or S01EP13-16)
-        const sxeRangeMatch = nameLower.match(/s(\d{1,3})\s*ep\(?(\d{1,3})(?:-|–)(\d{1,3})\)?/); // Handles both hyphen and en-dash
-        if (sxeRangeMatch) {
-            season = parseInt(sxeRangeMatch[1], 10);
-            const startEp = parseInt(sxeRangeMatch[2], 10);
-            const endEp = parseInt(sxeRangeMatch[3], 10);
-            for (let i = startEp; i <= endEp; i++) {
-                episodes.push(i);
-            }
-        } else {
-            // Regex for SXX (Season pack, implies all episodes for that season)
-            const seasonOnlyMatch = nameLower.match(/s(\d{1,3})(?:$|[^e\d])/); // matches s01, s02 but not s01e01, etc.
-            if (seasonOnlyMatch) {
-                season = parseInt(seasonOnlyMatch[1], 10);
-                episodes = []; // Represents "all episodes" for that season - special handling in filter
-            } else {
-                 // Regex for EPXX (single episode without explicit season) - less reliable, but a last resort
-                const epOnlyMatch = nameLower.match(/ep(\d{1,3})/);
-                if (epOnlyMatch) {
-                    episodes.push(parseInt(epOnlyMatch[1], 10));
-                    // Season remains null here, which means it will only match if requested season is also null
+    // Regex patterns and their parsing logic (order matters for overlapping matches)
+    const patterns = [
+        // SXXEXX (single episode, e.g., S01E15, s1e1)
+        {
+            regex: /s(\d{1,3})e(\d{1,3})/g,
+            parse: (match) => ({ season: parseInt(match[1], 10), episodes: [parseInt(match[2], 10)] })
+        },
+        // SXXE(YY-ZZ) (episode range without 'EP', e.g., s1e1-12)
+        {
+            regex: /s(\d{1,3})e(\d{1,3})(?:-|–)(\d{1,3})/g,
+            parse: (match) => {
+                const s = parseInt(match[1], 10);
+                const startEp = parseInt(match[2], 10);
+                const endEp = parseInt(match[3], 10);
+                const eps = [];
+                for (let i = startEp; i <= endEp; i++) {
+                    eps.push(i);
                 }
+                return { season: s, episodes: eps };
+            }
+        },
+        // SXXEP(YY-ZZ) or SXXEPYY-ZZ (episode range with 'EP', e.g., S01EP(13-16))
+        {
+            regex: /s(\d{1,3})\s*ep\(?(\d{1,3})(?:-|–)(\d{1,3})\)?/g,
+            parse: (match) => {
+                const s = parseInt(match[1], 10);
+                const startEp = parseInt(match[2], 10);
+                const endEp = parseInt(match[3], 10);
+                const eps = [];
+                for (let i = startEp; i <= endEp; i++) {
+                    eps.push(i);
+                }
+                return { season: s, episodes: eps };
+            }
+        },
+        // Word-based "Season X Episode Y" or "Season X Ep Y"
+        {
+            regex: /season\s*(\d{1,3})(?:\s*episode|\s*ep)\s*(\d{1,3})/g,
+            parse: (match) => ({ season: parseInt(match[1], 10), episodes: [parseInt(match[2], 10)] })
+        },
+        // SXX-SYY (Season ranges, e.g., S01-S06) - treating each as a season pack
+        {
+            regex: /s(\d{1,3})(?:-|–)s(\d{1,3})/g,
+            parse: (match) => {
+                const startSeason = parseInt(match[1], 10);
+                const endSeason = parseInt(match[2], 10);
+                const seasonPacks = [];
+                for (let i = startSeason; i <= endSeason; i++) {
+                    seasonPacks.push({ season: i, episodes: [] }); // Empty episodes for season pack
+                }
+                return seasonPacks; // Return an array of season packs to be flattened
+            }
+        },
+        // "Season X-Y" (Season ranges, e.g., Season 1-3) - treating each as a season pack
+        {
+            regex: /season\s*(\d{1,3})(?:-|–)(\d{1,3})/g,
+            parse: (match) => {
+                const startSeason = parseInt(match[1], 10);
+                const endSeason = parseInt(match[2], 10);
+                const seasonPacks = [];
+                for (let i = startSeason; i <= endSeason; i++) {
+                    seasonPacks.push({ season: i, episodes: [] }); // Empty episodes for season pack
+                }
+                return seasonPacks; // Return an array of season packs to be flattened
+            }
+        },
+        // SXX (Season pack, e.g., S01, S1) - ensure it's not part of SXXEXX
+        // This regex now specifically looks for 'S' followed by digits, not immediately followed by 'E' or another digit (for episode)
+        {
+            regex: /s(\d{1,3})(?![eE\d])/g,
+            parse: (match) => ({ season: parseInt(match[1], 10), episodes: [] })
+        },
+        // "Season X" (Season pack, e.g., Season 1) - ensure it's not part of "Season X Episode Y"
+        {
+            regex: /season\s*(\d{1,3})(?!(?:\s*episode|\s*ep|\d))/g, // Not followed by "episode", "ep", or digits
+            parse: (match) => ({ season: parseInt(match[1], 10), episodes: [] })
+        },
+        // EPXX (single episode without explicit season) - lowest priority
+        {
+            regex: /ep(\d{1,3})/g,
+            parse: (match) => ({ season: null, episodes: [parseInt(match[1], 10)] }) // Season remains null
+        }
+    ];
+
+    patterns.forEach(pattern => {
+        const matches = nameLower.matchAll(pattern.regex);
+        for (const match of matches) {
+            const result = pattern.parse(match);
+            if (Array.isArray(result)) { // Handle patterns that return multiple results (like season ranges)
+                result.forEach(item => addData(item.season, item.episodes));
+            } else {
+                addData(result.season, result.episodes);
             }
         }
-    }
+    });
 
-    // Deduplicate episode numbers
-    episodes = [...new Set(episodes)];
-
-    if (season === null && episodes.length === 0) {
-        return null; // No episode data parsed
-    }
-    return { season, episodes };
+    return parsedData.length > 0 ? parsedData : [];
 }
 
 /**
@@ -492,23 +559,31 @@ async function getStreams(type, id) {
     let relevantTorrents = bitMagnetResults;
     if (type === 'series' && season && episode) {
         relevantTorrents = relevantTorrents.filter(torrentContent => {
-            const parsed = torrentContent._parsedEpisodeData;
-            if (!parsed || parsed.season === null) {
-                // If we can't determine season, or no season info is parsed, it's not relevant for episode filtering
-                return false; 
+            const parsedDataArray = torrentContent._parsedEpisodeData;
+            if (!parsedDataArray || parsedDataArray.length === 0) {
+                return false; // No episode data parsed for this torrent
             }
-            
-            // Scenario 1: Season matches exactly
-            if (parsed.season === season) {
-                // If it's a season pack (episodes array is empty)
-                if (parsed.episodes.length === 0) {
-                    return true; // This season pack contains the requested season, so it's relevant for any episode in that season
+
+            // Check if any of the parsed season/episode patterns match the requested season and episode
+            return parsedDataArray.some(parsed => {
+                if (parsed.season === null) {
+                    return false; // Cannot filter by season if season is unknown for this entry
                 }
-                // If specific episodes are listed, check if the requested episode is in that list
-                return parsed.episodes.includes(episode);
-            }
-            
-            return false; // Season does not match
+
+                if (parsed.season === season) {
+                    // If it's a season pack (episodes array is empty for this parsed entry)
+                    // AND the requested episode is not null (i.e., we are looking for a specific episode within this season)
+                    if (parsed.episodes.length === 0 && episode !== null) {
+                        return true; // This season pack is relevant for any episode in that season
+                    }
+                    // If specific episodes are listed, check if the requested episode is in that list
+                    // And ensure episode is not null (i.e., we are looking for a specific episode)
+                    if (parsed.episodes.includes(episode) && episode !== null) {
+                        return true;
+                    }
+                }
+                return false; // Season does not match for this specific parsed entry
+            });
         });
         console.log(`Filtered to ${relevantTorrents.length} relevant torrents for S${season}E${episode}`);
     }
@@ -559,98 +634,31 @@ async function getStreams(type, id) {
             streamTitle = baseContentTitle; // Fallback if year/season/episode not available or applicable
         }
 
-        // Construct the Stremio 'description' field with multiple lines
-        const descriptionParts = [];
-
-        // Quality: BluRay | HEVC | 10bit
-        const qualityDetails = [];
-        if (torrentContent.videoSource) qualityDetails.push(torrentContent.videoSource); // e.g., BluRay
-        if (torrentContent.videoCodec) qualityDetails.push(torrentContent.videoCodec); // e.g., HEVC, x265
-        if (torrentContent.videoModifier) qualityDetails.push(torrentContent.videoModifier); // e.g., REMUX, WEBRip
-        
-        // Check for '10bit' in torrent.tagNames or torrent.name
-        if ((torrentContent.torrent.tagNames && torrentContent.torrent.tagNames.some(tag => tag.toLowerCase().includes('10bit'))) || torrentContent.torrent.name.toLowerCase().includes('10bit')) {
-            qualityDetails.push('10bit');
-        }
-        if (qualityDetails.length > 0) {
-            descriptionParts.push(`Quality: ${qualityDetails.join(' | ')}`);
-        } else {
-            descriptionParts.push('Quality: Unknown'); // Fallback for quality
-        }
-
-        // Size: 5.75 GiB | YTS
-        const sizeGB = (torrentContent.torrent.size / (1024 * 1024 * 1024)).toFixed(2);
-        let sizeInfo = `${sizeGB} GiB`;
-        const knownSources = ['yts', 'dmm', 'rarbg', 'ettv']; // Add more as needed
-        const sourceTag = torrentContent.torrent.tagNames?.find(tag => knownSources.includes(tag.toLowerCase()));
-        if (sourceTag) {
-            sizeInfo += ` | ${sourceTag.toUpperCase()}`;
-        }
-        descriptionParts.push(sizeInfo);
-
-        // Audio: DD 5.1 (Infer from torrent name or tags if possible, otherwise generic)
-        let audioQuality = 'Unknown Audio'; // Default
-        const torrentNameLower = torrentContent.torrent.name.toLowerCase();
-        if (torrentNameLower.includes('atmos')) audioQuality = 'Atmos';
-        else if (torrentNameLower.includes('dts-hd')) audioQuality = 'DTS-HD';
-        else if (torrentNameLower.includes('truehd')) audioQuality = 'TrueHD';
-        else if (torrentNameLower.includes('dts')) audioQuality = 'DTS';
-        else if (torrentNameLower.includes('eac3') || torrentNameLower.includes('ddp')) audioQuality = 'EAC3/DDP';
-        else if (torrentNameLower.includes('ac3')) audioQuality = 'AC3';
-        else if (torrentNameLower.includes('aac')) audioQuality = 'AAC';
-        else if (torrentNameLower.includes('dd 5.1') || torrentNameLower.includes('dolby digital 5.1')) audioQuality = 'DD 5.1';
-        else if (torrentNameLower.includes('2.0') || torrentNameLower.includes('stereo')) audioQuality = 'Stereo';
-        
-        descriptionParts.push(`Audio: ${audioQuality}`);
-
-        // Language: Latino|English|Tamil
-        if (torrentContent.languages && torrentContent.languages.length > 0) {
-            descriptionParts.push(`Language: ${torrentContent.languages.map(lang => lang.name.toUpperCase()).join('|')}`);
-        } else {
-            descriptionParts.push('Language: Unknown');
-        }
-        
-        // Seeders: 8
-        if (torrentContent.seeders !== undefined) {
-            descriptionParts.push(`Seeders: ${torrentContent.seeders}`);
-        }
-
-        const streamDescription = descriptionParts.join('\n'); // Join with newline characters
+        // Removed the construction of descriptionParts and setting streamDescription
+        // as per the previous debugging step where it was hypothesized to cause issues.
 
         let parsedMagnet;
-        // The infoHash from BitMagnet's GraphQL response is guaranteed to be present and reliable.
-        // This is the primary source for the DHT part of the 'sources'.
         const bitmagnetInfoHash = torrentContent.infoHash;
         let dhtInfoHash = bitmagnetInfoHash ? String(bitmagnetInfoHash).toLowerCase() : '';
 
-        let announceTrackers = []; // Trackers from the magnet URI
+        let announceTrackers = [];
 
         try {
-            // Attempt to parse magnet URI to get additional trackers that might be embedded.
-            // This is secondary to the fetched public trackers and BitMagnet's infoHash.
             parsedMagnet = parseTorrent(torrentContent.torrent.magnetUri);
             if (parsedMagnet && Array.isArray(parsedMagnet.announce)) {
                 announceTrackers = parsedMagnet.announce;
             } else {
-                // This warning indicates the magnet URI did not contain embedded announce URLs, which is fine.
-                // It means the magnet link relies on DHT or other means for initial peer discovery,
-                // which will be supplemented by our `publicTrackers`.
                 console.warn(`parse-torrent could not extract announce URLs from magnet URI for ${torrentContent.infoHash}. (This is often normal for some magnet links.)`);
             }
         } catch (e) {
-            // Log if parsing the magnet URI throws an error, but don't halt the stream creation.
             console.error(`Error parsing magnet URI for ${torrentContent.infoHash}:`, e.message);
-            // In case of error, announceTrackers remains an empty array
         }
 
-        // Combine trackers from magnet URI and best public trackers, ensuring uniqueness
-        // Convert all to 'tracker:URL' format and use a Set for uniqueness
         const allTrackers = new Set([
             ...announceTrackers.map(t => `tracker:${t}`),
             ...publicTrackers.map(t => `tracker:${t}`)
         ]);
         
-        // Add DHT source if infoHash is available (it always should be from BitMagnet)
         if (dhtInfoHash) {
             allTrackers.add(`dht:${dhtInfoHash}`);
         } else {
@@ -660,24 +668,16 @@ async function getStreams(type, id) {
         const sources = Array.from(allTrackers);
 
         return {
-            infoHash: torrentContent.infoHash, // Always use BitMagnet's infoHash for the primary stream object
-            name: streamName, // "Bitmagnet-{Resolution}"
-            title: streamTitle, // "Content Title (Year)" or "SXXEXX Content Title"
-            description: streamDescription, // Detailed multi-line description
-            type: torrentContent.contentType, // Optional, but provides useful info for Stremio UI
-            quality: torrentContent.videoResolution ? torrentContent.videoResolution.replace('V', '') : 'Unknown', // Optional, provides useful info for Stremio UI
-            seeders: torrentContent.seeders, // Optional, provides useful info for Stremio UI
-            // Removed 'url' property as per comparison with working Jackett addon.
-            // Stremio will construct the magnet link internally from infoHash and sources.
-            sources: sources, // Add the extracted and combined trackers
+            infoHash: torrentContent.infoHash,
+            name: streamName,
+            title: streamTitle,
+            // Removed 'description' field entirely
+            type: torrentContent.contentType,
+            quality: torrentContent.videoResolution ? torrentContent.videoResolution.replace('V', '') : 'Unknown',
+            seeders: torrentContent.seeders,
+            sources: sources,
             behaviorHints: {
-                bittorrent: true, // Explicitly tell Stremio this is a P2P torrent
-                // Removed 'proxyHeaders' property as it might cause conflicts for bittorrent streams.
-                // proxyHeaders: {
-                //     request: {
-                //         seedtime: 3600 // Seed for 1 hour after watching
-                //     }
-                // }
+                bittorrent: true,
             }
         };
     });
