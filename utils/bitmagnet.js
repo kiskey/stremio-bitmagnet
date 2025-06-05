@@ -1,5 +1,3 @@
-// utils/bitmagnet.js
-// Utility functions for interacting with the BitMagnet GraphQL API.
 
 const axios = require('axios');
 const config = require('../config');
@@ -113,7 +111,8 @@ async function searchBitMagnet({ queryString, contentType, releaseYear }) {
                 contentType: { filter: contentType ? [contentType] : [] },
                 // Convert releaseYear to string as the Year scalar might expect a string
                 releaseYear: { filter: releaseYear ? [String(releaseYear)] : [] }
-            }
+            },
+            cached: true // Explicitly request cached results from BitMagnet if available
         }
     };
 
