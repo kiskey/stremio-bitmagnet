@@ -334,50 +334,41 @@ async function getStreams(type, id) {
         const streamName = `Bitmagnet-${resolutionForName}`;
 
         // Construct the Stremio 'title' field: "Content Title (Year)" or "SXXEXX Content Title"
-        let streamTitle;
         let contentDisplayTitle = title; // From TMDB metadata
         if (type === 'movie' && year) {
-            streamTitle = `${contentDisplayTitle} (${year})`;
+            contentDisplayTitle += ` (${year})`;
         } else if (type === 'series' && season && episode) {
-            streamTitle = `S${String(season).padStart(2, '0')}E${String(episode).padStart(2, '0')} ${contentDisplayTitle}`;
-        } else {
-            streamTitle = contentDisplayTitle; // Fallback if year/season/episode not available or applicable
+            contentDisplayTitle = `S${String(season).padStart(2, '0')}E${String(episode).padStart(2, '0')} ${contentDisplayTitle}`;
         }
-
-        // Construct the Stremio 'description' field with multiple lines
-        const descriptionParts = [];
+        
+        // New approach for streamTitle: combine all details into a single line
+        const combinedDetails = [];
 
         // Quality: BluRay | HEVC | 10bit
         const qualityDetails = [];
-        if (torrentContent.videoModifier) qualityDetails.push(torrentContent.videoModifier); // e.g., REMUX, WEBRip
         if (torrentContent.videoSource) qualityDetails.push(torrentContent.videoSource); // e.g., BluRay
         if (torrentContent.videoCodec) qualityDetails.push(torrentContent.videoCodec); // e.g., HEVC, x265
-        
-        // Check for '10bit' in torrent.tagNames or torrent.name
+        if (torrentContent.videoModifier) qualityDetails.push(torrentContent.videoModifier); // e.g., REMUX, WEBRip
         if ((torrentContent.torrent.tagNames && torrentContent.torrent.tagNames.some(tag => tag.toLowerCase().includes('10bit'))) || torrentContent.torrent.name.toLowerCase().includes('10bit')) {
             qualityDetails.push('10bit');
         }
         if (qualityDetails.length > 0) {
-            descriptionParts.push(`Quality: ${qualityDetails.join(' | ')}`);
-        } else {
-            descriptionParts.push('Quality: Unknown'); // Fallback for quality
+            combinedDetails.push(qualityDetails.join(' | '));
         }
 
         // Size: 5.75 GiB | YTS
         const sizeGB = (torrentContent.torrent.size / (1024 * 1024 * 1024)).toFixed(2);
-        let sizeLine = `Size: ${sizeGB} GiB`;
-        // Try to find release group/source from tagNames if available
+        let sizeInfo = `${sizeGB} GiB`;
         const knownSources = ['yts', 'dmm', 'rarbg', 'ettv']; // Add more as needed
         const sourceTag = torrentContent.torrent.tagNames?.find(tag => knownSources.includes(tag.toLowerCase()));
         if (sourceTag) {
-            sizeLine += ` | ${sourceTag.toUpperCase()}`;
+            sizeInfo += ` ${sourceTag.toUpperCase()}`;
         }
-        descriptionParts.push(sizeLine);
+        combinedDetails.push(sizeInfo);
 
-        // Audio: DD 5.1 (Infer from torrent name or tags if possible, otherwise generic)
-        let audioQuality = 'Unknown';
+        // Audio: DD 5.1
+        let audioQuality = 'Unknown Audio'; // Default
         const torrentNameLower = torrentContent.torrent.name.toLowerCase();
-        // More comprehensive audio parsing from torrent name
         if (torrentNameLower.includes('atmos')) audioQuality = 'Atmos';
         else if (torrentNameLower.includes('dts-hd')) audioQuality = 'DTS-HD';
         else if (torrentNameLower.includes('truehd')) audioQuality = 'TrueHD';
@@ -388,22 +379,22 @@ async function getStreams(type, id) {
         else if (torrentNameLower.includes('dd 5.1') || torrentNameLower.includes('dolby digital 5.1')) audioQuality = 'DD 5.1';
         else if (torrentNameLower.includes('2.0') || torrentNameLower.includes('stereo')) audioQuality = 'Stereo';
         
-        descriptionParts.push(`Audio: ${audioQuality}`);
+        combinedDetails.push(audioQuality);
 
         // Language: Latino|English|Tamil
         if (torrentContent.languages && torrentContent.languages.length > 0) {
-            descriptionParts.push(`Language: ${torrentContent.languages.map(lang => lang.name.toUpperCase()).join('|')}`);
+            combinedDetails.push(torrentContent.languages.map(lang => lang.name.toUpperCase()).join('|'));
         } else {
-            // Fallback for language if not explicitly available
-            descriptionParts.push('Language: Unknown');
+            combinedDetails.push('Unknown Language');
         }
-
+        
         // Seeders: 8
         if (torrentContent.seeders !== undefined) {
-            descriptionParts.push(`Seeders: ${torrentContent.seeders}`);
+            combinedDetails.push(`S:${torrentContent.seeders}`);
         }
 
-        const streamDescription = descriptionParts.join('\n'); // Join with newline characters
+        // Combine content title and detailed info for the final stream.title
+        const finalStreamTitle = `${contentDisplayTitle} [${combinedDetails.join(' | ')}]`;
 
         let parsedMagnet;
         // The infoHash from BitMagnet's GraphQL response is guaranteed to be present and reliable.
@@ -450,8 +441,8 @@ async function getStreams(type, id) {
         return {
             infoHash: torrentContent.infoHash, // Always use BitMagnet's infoHash for the primary stream object
             name: streamName, // "Bitmagnet-{Resolution}"
-            title: streamTitle, // "Content Title (Year)" or "SXXEXX Content Title"
-            description: streamDescription, // Detailed multi-line description
+            title: finalStreamTitle, // Combined detailed title
+            // Removed 'description' field to simplify
             type: torrentContent.contentType, // Optional, but provides useful info for Stremio UI
             quality: torrentContent.videoResolution ? torrentContent.videoResolution.replace('V', '') : 'Unknown', // Optional, provides useful info for Stremio UI
             seeders: torrentContent.seeders, // Optional, provides useful info for Stremio UI
