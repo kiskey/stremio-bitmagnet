@@ -5,6 +5,7 @@
 const config = require('./config');
 const { searchBitMagnet } = require('./utils/bitmagnet');
 const { getTmdbMetadata, searchTmdb } = require('./utils/tmdb');
+const { getTrackers } = require('./utils/trackerFetcher'); // Import the new tracker fetcher
 const NodeCache = require('node-cache');
 
 // Initialize caches
@@ -326,6 +327,9 @@ async function getStreams(type, id) {
     const maxStreams = parseInt(config.MAX_STREAMS_PER_ITEM, 10) || 10; // Default to 10 if not set or invalid
     const topTorrents = relevantTorrents.slice(0, maxStreams);
 
+    // Get the dynamically fetched best public trackers
+    const publicTrackers = await getTrackers();
+
     const streams = topTorrents.map(torrentContent => {
         const qualityDetails = [];
         if (torrentContent.videoResolution) qualityDetails.push(torrentContent.videoResolution.replace('V', ''));
@@ -375,7 +379,11 @@ async function getStreams(type, id) {
         }
 
         // Combine trackers from magnet URI and best public trackers, ensuring uniqueness
-        const allTrackers = new Set([...announceTrackers.map(t => `tracker:${t}`), ...config.BEST_PUBLIC_TRACKERS.map(t => `tracker:${t}`)]);
+        // Convert all to 'tracker:URL' format and use a Set for uniqueness
+        const allTrackers = new Set([
+            ...announceTrackers.map(t => `tracker:${t}`),
+            ...publicTrackers.map(t => `tracker:${t}`)
+        ]);
         
         // Add DHT source if infoHash is available
         if (dhtInfoHash) {
