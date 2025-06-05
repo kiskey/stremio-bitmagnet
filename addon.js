@@ -330,8 +330,8 @@ async function getStreams(type, id) {
 
     const streams = topTorrents.map(torrentContent => {
         // Construct the Stremio 'name' field
-        // As per the user's request, set to "Bitmagnet.Local"
-        const streamName = 'Bitmagnet.Local';
+        // As per the user's request, set to "Bitmagnet"
+        const streamName = 'Bitmagnet';
 
         // Construct the Stremio 'title' field for detailed stream information.
         // This will be the prominent display text for the stream.
