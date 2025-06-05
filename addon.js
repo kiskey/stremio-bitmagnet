@@ -295,6 +295,75 @@ function calculateQualityScore(torrentContent) {
 }
 
 /**
+ * Parses episode information from a torrent name or BitMagnet's episodes label.
+ * @param {string} torrentName - The full torrent name.
+ * @param {object} torrentContentEpisodes - The episodes object from BitMagnet's content (can have label and seasons array).
+ * @returns {{season: number|null, episodes: number[]}|null} Parsed season and episode numbers, or null if not found.
+ */
+function parseTorrentEpisodeData(torrentName, torrentContentEpisodes) {
+    let season = null;
+    let episodes = [];
+
+    // Prioritize BitMagnet's structured episodes if available and usable
+    if (torrentContentEpisodes && torrentContentEpisodes.seasons && Array.isArray(torrentContentEpisodes.seasons)) {
+        // Find the first season that has a defined season number
+        const primarySeasonData = torrentContentEpisodes.seasons.find(s => s.season !== null && s.season !== undefined);
+        if (primarySeasonData) {
+            season = primarySeasonData.season;
+            if (primarySeasonData.episodes && Array.isArray(primarySeasonData.episodes) && primarySeasonData.episodes.length > 0) {
+                episodes = primarySeasonData.episodes;
+            }
+            // If structured episodes are found, use them and don't re-parse from name
+            return { season, episodes };
+        }
+    }
+
+    // Fallback to parsing from torrent name or episodes label if structured data is insufficient
+    const nameToParse = torrentContentEpisodes && torrentContentEpisodes.label ? torrentContentEpisodes.label : torrentName;
+    const nameLower = nameToParse.toLowerCase();
+
+    // Regex for SXXEXX (e.g., S01E15) - finds first occurrence
+    const sxeMatch = nameLower.match(/s(\d{1,3})e(\d{1,3})/);
+    if (sxeMatch) {
+        season = parseInt(sxeMatch[1], 10);
+        episodes.push(parseInt(sxeMatch[2], 10));
+    } else {
+        // Regex for SXXEP(YY-ZZ) or SXXEPYY-ZZ (e.g., S01EP(13-16) or S01EP13-16)
+        const sxeRangeMatch = nameLower.match(/s(\d{1,3})\s*ep\(?(\d{1,3})(?:-|–)(\d{1,3})\)?/); // Handles both hyphen and en-dash
+        if (sxeRangeMatch) {
+            season = parseInt(sxeRangeMatch[1], 10);
+            const startEp = parseInt(sxeRangeMatch[2], 10);
+            const endEp = parseInt(sxeRangeMatch[3], 10);
+            for (let i = startEp; i <= endEp; i++) {
+                episodes.push(i);
+            }
+        } else {
+            // Regex for SXX (Season pack, implies all episodes for that season)
+            const seasonOnlyMatch = nameLower.match(/s(\d{1,3})(?:$|[^e\d])/); // matches s01, s02 but not s01e01, etc.
+            if (seasonOnlyMatch) {
+                season = parseInt(seasonOnlyMatch[1], 10);
+                episodes = []; // Represents "all episodes" for that season - special handling in filter
+            } else {
+                 // Regex for EPXX (single episode without explicit season) - less reliable, but a last resort
+                const epOnlyMatch = nameLower.match(/ep(\d{1,3})/);
+                if (epOnlyMatch) {
+                    episodes.push(parseInt(epOnlyMatch[1], 10));
+                    // Season remains null here, which means it will only match if requested season is also null
+                }
+            }
+        }
+    }
+
+    // Deduplicate episode numbers
+    episodes = [...new Set(episodes)];
+
+    if (season === null && episodes.length === 0) {
+        return null; // No episode data parsed
+    }
+    return { season, episodes };
+}
+
+/**
  * Handles stream requests.
  * @param {string} type - 'movie' or 'series'.
  * @param {string} id - IMDb ID (e.g., 'tt1234567' or 'tt1234567:1:1' for series).
@@ -371,8 +440,7 @@ async function getStreams(type, id) {
         const broadResults = await searchBitMagnet({
             queryString: broadQueryString,
             contentType: type === 'movie' ? 'movie' : 'tv_show',
-            // Do NOT include releaseYear filter here for a broader search
-            releaseYear: null // Explicitly set to null to avoid filtering
+            releaseYear: null // Explicitly set to null to avoid filtering in BitMagnet's facets
         });
         console.log(`Broad search for "${broadQueryString}" (${yearForSearch || 'Unknown Year'}) found ${broadResults.length} results.`);
         broadResults.forEach(item => {
@@ -385,8 +453,9 @@ async function getStreams(type, id) {
         console.error(`Error in broad BitMagnet search for "${broadQueryString}":`, error.message);
     }
 
-    // Strategy 2: Fallback with Year Filter (only if no results from broad search, or if year was available)
-    if (bitMagnetResults.length === 0 && yearForSearch !== null) {
+    // Strategy 2: Fallback with Year Filter (only if no results from broad search, or if year was available and valid)
+    // This provides a more precise search if the broad one fails and we have a reliable year.
+    if (bitMagnetResults.length === 0 && yearForSearch !== null && !isNaN(yearForSearch)) {
         try {
             const fallbackResults = await searchBitMagnet({
                 queryString: titleForSearch, // Just the title
@@ -411,17 +480,35 @@ async function getStreams(type, id) {
         return { streams: [] };
     }
 
+    // First, parse episode data for each torrent in the combined results
+    bitMagnetResults.forEach(torrentContent => {
+        if (type === 'series') {
+            torrentContent._parsedEpisodeData = parseTorrentEpisodeData(torrentContent.torrent.name, torrentContent.episodes);
+            // console.log(`Parsed episode data for ${torrentContent.torrent.name}:`, torrentContent._parsedEpisodeData);
+        }
+    });
+
     // Filter results for TV shows by season and episode
     let relevantTorrents = bitMagnetResults;
     if (type === 'series' && season && episode) {
         relevantTorrents = relevantTorrents.filter(torrentContent => {
-            if (!torrentContent.episodes) {
-                return false;
+            const parsed = torrentContent._parsedEpisodeData;
+            if (!parsed || parsed.season === null) {
+                // If we can't determine season, or no season info is parsed, it's not relevant for episode filtering
+                return false; 
             }
-            // Check if any season/episode combination matches
-            return torrentContent.episodes.seasons.some(s =>
-                s.season === season && s.episodes && s.episodes.includes(episode)
-            );
+            
+            // Scenario 1: Season matches exactly
+            if (parsed.season === season) {
+                // If it's a season pack (episodes array is empty)
+                if (parsed.episodes.length === 0) {
+                    return true; // This season pack contains the requested season, so it's relevant for any episode in that season
+                }
+                // If specific episodes are listed, check if the requested episode is in that list
+                return parsed.episodes.includes(episode);
+            }
+            
+            return false; // Season does not match
         });
         console.log(`Filtered to ${relevantTorrents.length} relevant torrents for S${season}E${episode}`);
     }
