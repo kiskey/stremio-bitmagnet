@@ -6,7 +6,6 @@ const config = require('./config');
 const { searchBitMagnet } = require('./utils/bitmagnet');
 const { getTmdbMetadata, searchTmdb } = require('./utils/tmdb');
 const NodeCache = require('node-cache');
-const parseTorrent = require('parse-torrent'); // Import parse-torrent for extracting trackers
 
 // Initialize caches
 const tmdbCache = new NodeCache({ stdTTL: 3600, checkperiod: 120 }); // Cache TMDB responses for 1 hour
@@ -225,6 +224,10 @@ async function getStreams(type, id) {
     let season = null;
     let episode = null;
 
+    // Dynamically import parse-torrent here to avoid ERR_PACKAGE_PATH_NOT_EXPORTED
+    // parseTorrent is a default export, so we access it via .default
+    const parseTorrent = (await import('parse-torrent')).default;
+
     // Handle series ID format (e.g., tt1234567:1:1)
     if (type === 'series') {
         const parts = id.split(':');
@@ -351,6 +354,7 @@ async function getStreams(type, id) {
         // Extract trackers from the magnet URI
         let parsedMagnet;
         try {
+            // Using dynamically imported parseTorrent
             parsedMagnet = parseTorrent(torrentContent.torrent.magnetUri);
         } catch (e) {
             console.error(`Error parsing magnet URI for ${torrentContent.infoHash}:`, e.message);
