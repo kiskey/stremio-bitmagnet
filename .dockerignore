@@ -1,0 +1,11 @@
+# .dockerignore
+# Ignore node_modules as they are installed inside the container
+node_modules
+# Ignore .env files if you use them for local development
+.env
+# Ignore any IDE specific files
+.vscode
+.idea
+# Ignore logs or other temporary files
+*.log
+npm-debug.log*
