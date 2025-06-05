@@ -1,3 +1,5 @@
+// utils/bitmagnet.js
+// Utility functions for interacting with the BitMagnet GraphQL API.
 
 const axios = require('axios');
 const config = require('../config');
