@@ -69,6 +69,22 @@ query TorrentContentSearch($input: TorrentContentSearchQueryInput!) {
 `;
 
 /**
+ * Sanitizes a title string by removing special characters and extra spaces.
+ * @param {string} title - The title string to sanitize.
+ * @returns {string} The sanitized title.
+ */
+function sanitizeTitle(title) {
+    if (!title) return '';
+    // Remove characters that are not alphanumeric, spaces, or hyphens/underscores
+    // Also remove common release group tags or year in parentheses/brackets
+    // And replace multiple spaces with a single space
+    return title
+        .replace(/(\(|\)|\[|\]|\{|\}|'|"|\.|,|-|_|!|\?|\/|:|;|\(|\)|\&)/g, ' ') // Replace common special chars with space
+        .replace(/\s+/g, ' ') // Replace multiple spaces with a single space
+        .trim(); // Trim leading/trailing spaces
+}
+
+/**
  * Searches the BitMagnet GraphQL API for torrent content.
  * @param {object} params - Search parameters.
  * @param {string} params.queryString - The search query string (e.g., movie title).
@@ -82,9 +98,12 @@ async function searchBitMagnet({ queryString, contentType, releaseYear }) {
         return [];
     }
 
+    // Sanitize the query string before sending it to BitMagnet
+    const sanitizedQueryString = sanitizeTitle(queryString);
+
     const variables = {
         input: {
-            queryString: queryString,
+            queryString: sanitizedQueryString,
             limit: 50, // Fetch more than 10 to allow for client-side filtering/sorting
             orderBy: [
                 { field: 'seeders', descending: true },
@@ -92,12 +111,14 @@ async function searchBitMagnet({ queryString, contentType, releaseYear }) {
             ],
             facets: {
                 contentType: { filter: contentType ? [contentType] : [] },
-                releaseYear: { filter: releaseYear ? [releaseYear] : [] }
+                // Convert releaseYear to string as the Year scalar might expect a string
+                releaseYear: { filter: releaseYear ? [String(releaseYear)] : [] }
             }
         }
     };
 
     try {
+        console.log('Sending GraphQL query to BitMagnet with variables:', JSON.stringify(variables, null, 2)); // Log full payload
         const response = await axios.post(
             config.BITMAGNET_GRAPHQL_ENDPOINT,
             {
