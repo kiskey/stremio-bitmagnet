@@ -51,9 +51,6 @@ function getManifest() {
             // By default, Stremio will proxy streams if this is not set.
             // Setting this to true means Stremio will attempt direct P2P connection via magnet link.
             // This requires the Stremio client to have WebTorrent or a similar client integrated.
-            // This is the common practice for torrent-based addons.
-            // For true "in-browser streaming from addon server", you would need webtorrent-hybrid on the server.
-            // We assume Stremio client handles the P2P part with the magnet link.
             // For details, see: [https://github.com/Stremio/stremio-addon-sdk/blob/master/docs/api/stream.md](https://github.com/Stremio/stremio-addon-sdk/blob/master/docs/api/stream.md)
             // "bittorrent": true // This is usually applied per stream, not globally in manifest.
         }
@@ -371,7 +368,9 @@ async function getStreams(type, id) {
                 announceTrackers = parsedMagnet.announce;
             } else {
                 // This warning indicates the magnet URI did not contain embedded announce URLs, which is fine.
-                console.warn(`parse-torrent could not extract announce URLs from magnet URI for ${torrentContent.infoHash}.`);
+                // It means the magnet link relies on DHT or other means for initial peer discovery,
+                // which will be supplemented by our `publicTrackers`.
+                console.warn(`parse-torrent could not extract announce URLs from magnet URI for ${torrentContent.infoHash}. (This is often normal for some magnet links.)`);
             }
         } catch (e) {
             // Log if parsing the magnet URI throws an error, but don't halt the stream creation.
@@ -405,7 +404,7 @@ async function getStreams(type, id) {
             url: torrentContent.torrent.magnetUri,
             sources: sources, // Add the extracted and combined trackers
             behaviorHints: {
-                bittorrent: true,
+                bittorrent: true, // Explicitly tell Stremio this is a P2P torrent
                 proxyHeaders: {
                     request: {
                         seedtime: 3600 // Seed for 1 hour after watching
