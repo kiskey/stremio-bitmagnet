@@ -7,7 +7,7 @@ const NodeCache = require('node-cache');
 
 const tmdbApiCache = new NodeCache({ stdTTL: 86400, checkperiod: 120 }); // Cache TMDB API calls for 24 hours
 
-const TMDB_BASE_URL = 'https://api.themoviedb.org/3';
+const TMDB_BASE_URL = '[https://api.themoviedb.org/3](https://api.themoviedb.org/3)';
 
 /**
  * Fetches TMDB metadata for a given IMDb ID.
