@@ -329,29 +329,44 @@ async function getStreams(type, id) {
     const publicTrackers = await getTrackers();
 
     const streams = topTorrents.map(torrentContent => {
-        const qualityDetails = [];
-        if (torrentContent.videoResolution) qualityDetails.push(torrentContent.videoResolution.replace('V', ''));
-        if (torrentContent.videoCodec) qualityDetails.push(torrentContent.videoCodec);
-        if (torrentContent.videoModifier) qualityDetails.push(torrentContent.videoModifier);
-        if (torrentContent.video3d) qualityDetails.push(torrentContent.video3d);
+        // Construct the Stremio 'name' field
+        // As per the user's request, set to "Bitmagnet.Local"
+        const streamName = 'Bitmagnet.Local';
+
+        // Construct the Stremio 'title' field for detailed stream information.
+        // This will be the prominent display text for the stream.
+        const streamTitleParts = [];
+
+        // Prepend "Stremio-BitMagnet" as requested by the user for clarity
+        streamTitleParts.push('Stremio-BitMagnet');
+
+        // 1. Movie/Series Title and Year/Season/Episode
+        let contentDisplayTitle = title; // This is the movie/series title from TMDB metadata
+        if (type === 'movie' && year) {
+            contentDisplayTitle += ` (${year})`;
+        } else if (type === 'series' && season && episode) {
+            contentDisplayTitle = `S${String(season).padStart(2, '0')}E${String(episode).padStart(2, '0')} ${contentDisplayTitle}`;
+        }
+        streamTitleParts.push(contentDisplayTitle);
+
+        // 2. Resolution (e.g., 2160p, 1080p)
+        if (torrentContent.videoResolution) {
+            streamTitleParts.push(torrentContent.videoResolution.replace('V', ''));
+        }
+
+        // 3. Languages (e.g., ENGLISH, MULTI)
         if (torrentContent.languages && torrentContent.languages.length > 0) {
-             qualityDetails.push(torrentContent.languages.map(lang => lang.name.toUpperCase()).join('/'));
+            // Map language names to uppercase, then join them
+            streamTitleParts.push(torrentContent.languages.map(lang => lang.name.toUpperCase()).join('/'));
         }
 
-        const nameParts = [];
-        if (torrentContent.torrent.name) nameParts.push(torrentContent.torrent.name);
-        if (torrentContent.seeders !== undefined) nameParts.push(`S:${torrentContent.seeders}`);
-        if (torrentContent.leechers !== undefined) nameParts.push(`L:${torrentContent.leechers}`);
+        // 4. Seeders (e.g., Seeders:8)
+        if (torrentContent.seeders !== undefined) {
+            streamTitleParts.push(`Seeders:${torrentContent.seeders}`);
+        }
 
-        // Construct a user-friendly title
-        let streamTitle = `${qualityDetails.join(' ')} ${torrentContent.seeders ? `(${torrentContent.seeders} Seeders)` : ''}`;
-        if (type === 'series' && season && episode) {
-            streamTitle = `S${String(season).padStart(2, '0')}E${String(episode).padStart(2, '0')} ${streamTitle}`;
-        }
-        // Ensure stream title is not empty, fallback to torrent name
-        if (streamTitle.trim() === '') {
-            streamTitle = torrentContent.torrent.name || 'Unknown Quality';
-        }
+        // Combine all parts for the final 'title' string
+        const finalStreamTitle = streamTitleParts.join(' ');
 
         let parsedMagnet;
         // The infoHash from BitMagnet's GraphQL response is guaranteed to be present and reliable.
@@ -397,8 +412,8 @@ async function getStreams(type, id) {
 
         return {
             infoHash: torrentContent.infoHash, // Always use BitMagnet's infoHash for the primary stream object
-            name: nameParts.join(' | '), // This is what shows up as the torrent name in Stremio
-            title: streamTitle.trim(), // This is the user-facing quality label
+            name: streamName, // Simplified addon name: "Bitmagnet.Local"
+            title: finalStreamTitle, // Detailed stream description
             type: torrentContent.contentType, // Optional, but provides useful info for Stremio UI
             quality: torrentContent.videoResolution ? torrentContent.videoResolution.replace('V', '') : 'Unknown', // Optional, provides useful info for Stremio UI
             seeders: torrentContent.seeders, // Optional, provides useful info for Stremio UI
