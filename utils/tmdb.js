@@ -1,4 +1,3 @@
-
 // utils/tmdb.js
 // Utility functions for interacting with the TMDB API.
 
@@ -8,7 +7,7 @@ const NodeCache = require('node-cache');
 
 const tmdbApiCache = new NodeCache({ stdTTL: 86400, checkperiod: 120 }); // Cache TMDB API calls for 24 hours
 
-const TMDB_BASE_URL = '[https://api.themoviedb.org/3](https://api.themoviedb.org/3)';
+const TMDB_BASE_URL = 'https://api.themoviedb.org/3';
 
 /**
  * Fetches TMDB metadata for a given IMDb ID.
@@ -17,21 +16,25 @@ const TMDB_BASE_URL = '[https://api.themoviedb.org/3](https://api.themoviedb.org
  * @returns {object|null} The TMDB metadata object, or null if not found.
  */
 async function getTmdbMetadata(imdbId, type) {
-    if (!config.TMDB_API_KEY || config.TMDB_API_KEY === 'YOUR_TMDB_API_KEY_HERE') {
-        console.error('TMDB_API_KEY is not configured. Please set it in config.js or as an environment variable.');
+    // Validate TMDB API Key before making any API call
+    if (!config.TMDB_API_KEY || config.TMDB_API_KEY.trim() === '' || config.TMDB_API_KEY === 'YOUR_TMDB_API_KEY_HERE') {
+        console.error('TMDB_API_KEY is not configured or is the placeholder. Please set a valid TMDB API Key in config.js or as an environment variable.');
         return null;
     }
 
     const cacheKey = `tmdb_meta_fetch_${imdbId}_${type}`;
     let cachedData = tmdbApiCache.get(cacheKey);
     if (cachedData) {
+        console.log(`Returning cached TMDB metadata for ${imdbId}`);
         return cachedData;
     }
 
     try {
         // TMDB uses 'external_ids' endpoint to find by IMDb ID
+        const findUrl = `${TMDB_BASE_URL}/find/${imdbId}`;
+        console.log(`Fetching TMDB metadata from URL: ${findUrl}`); // Log the URL
         const response = await axios.get(
-            `${TMDB_BASE_URL}/find/${imdbId}`,
+            findUrl,
             {
                 params: {
                     api_key: config.TMDB_API_KEY,
@@ -48,12 +51,16 @@ async function getTmdbMetadata(imdbId, type) {
         if (type === 'movie' && response.data.movie_results && response.data.movie_results.length > 0) {
             data = response.data.movie_results[0];
             // Fetch detailed movie info for genres, runtime etc.
-            const movieDetails = await axios.get(`${TMDB_BASE_URL}/movie/${data.id}`, { params: { api_key: config.TMDB_API_KEY } });
+            const movieDetailsUrl = `${TMDB_BASE_URL}/movie/${data.id}`;
+            console.log(`Fetching TMDB movie details from URL: ${movieDetailsUrl}`); // Log the URL
+            const movieDetails = await axios.get(movieDetailsUrl, { params: { api_key: config.TMDB_API_KEY } });
             data = { ...data, ...movieDetails.data };
         } else if (type === 'series' && response.data.tv_results && response.data.tv_results.length > 0) {
             data = response.data.tv_results[0];
             // Fetch detailed TV info for genres, seasons, episodes etc.
-            const tvDetails = await axios.get(`${TMDB_BASE_URL}/tv/${data.id}`, { params: { api_key: config.TMDB_API_KEY } });
+            const tvDetailsUrl = `${TMDB_BASE_URL}/tv/${data.id}`;
+            console.log(`Fetching TMDB TV details from URL: ${tvDetailsUrl}`); // Log the URL
+            const tvDetails = await axios.get(tvDetailsUrl, { params: { api_key: config.TMDB_API_KEY } });
             data = { ...data, ...tvDetails.data };
         }
 
@@ -68,8 +75,11 @@ async function getTmdbMetadata(imdbId, type) {
     } catch (error) {
         console.error(`Error fetching TMDB metadata for ${imdbId}:`, error.message);
         if (error.response) {
-            console.error('TMDB API Response Error:', error.response.status, error.response.data);
-            if (error.response.status === 429) {
+            console.error('TMDB API Response Error Status:', error.response.status);
+            console.error('TMDB API Response Data:', error.response.data);
+            if (error.response.status === 401) {
+                console.error('TMDB API Key might be invalid. Please check your TMDB_API_KEY.');
+            } else if (error.response.status === 429) {
                 console.error('TMDB API rate limit exceeded. Please wait before retrying.');
             }
         }
@@ -84,21 +94,25 @@ async function getTmdbMetadata(imdbId, type) {
  * @returns {Array<object>} An array of TMDB search results.
  */
 async function searchTmdb(query, type) {
-    if (!config.TMDB_API_KEY || config.TMDB_API_KEY === 'YOUR_TMDB_API_KEY_HERE') {
-        console.error('TMDB_API_KEY is not configured. Please set it in config.js or as an environment variable.');
+    // Validate TMDB API Key before making any API call
+    if (!config.TMDB_API_KEY || config.TMDB_API_KEY.trim() === '' || config.TMDB_API_KEY === 'YOUR_TMDB_API_KEY_HERE') {
+        console.error('TMDB_API_KEY is not configured or is the placeholder. Please set a valid TMDB API Key in config.js or as an environment variable.');
         return [];
     }
 
     const cacheKey = `tmdb_search_${query}_${type}`;
     let cachedData = tmdbApiCache.get(cacheKey);
     if (cachedData) {
+        console.log(`Returning cached TMDB search results for "${query}"`);
         return cachedData;
     }
 
     const searchPath = type === 'movie' ? 'movie' : 'tv';
     try {
+        const searchUrl = `${TMDB_BASE_URL}/search/${searchPath}`;
+        console.log(`Searching TMDB from URL: ${searchUrl} with query: "${query}"`); // Log the URL
         const response = await axios.get(
-            `${TMDB_BASE_URL}/search/${searchPath}`,
+            searchUrl,
             {
                 params: {
                     api_key: config.TMDB_API_KEY,
@@ -115,8 +129,11 @@ async function searchTmdb(query, type) {
     } catch (error) {
         console.error(`Error searching TMDB for "${query}" (${type}):`, error.message);
         if (error.response) {
-            console.error('TMDB API Response Error:', error.response.status, error.response.data);
-            if (error.response.status === 429) {
+            console.error('TMDB API Response Error Status:', error.response.status);
+            console.error('TMDB API Response Data:', error.response.data);
+            if (error.response.status === 401) {
+                console.error('TMDB API Key might be invalid. Please check your TMDB_API_KEY.');
+            } else if (error.response.status === 429) {
                 console.error('TMDB API rate limit exceeded. Please wait before retrying.');
             }
         }
