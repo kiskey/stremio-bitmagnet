@@ -47,6 +47,7 @@ function getManifest() {
         ],
         idPrefixes: ['tt'], // Indicates support for IMDb IDs
         behaviorHints: {
+            p2p: true, // Explicitly tell Stremio this addon provides P2P content.
             // This is important if you want to provide high-quality streams without excessive buffering
             // By default, Stremio will proxy streams if this is not set.
             // Setting this to true means Stremio will attempt direct P2P connection via magnet link.
