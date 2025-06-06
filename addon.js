@@ -603,16 +603,18 @@ async function getStreams(type, id) {
         return { streams: [] };
     }
 
-    // Primary sort by quality score (descending), secondary sort by seeders (descending)
+    // Primary sort by seeders (descending), secondary sort by quality score (descending)
     relevantTorrents.sort((a, b) => {
-        const scoreA = calculateQualityScore(a);
-        const scoreB = calculateQualityScore(b);
+        const seedersA = a.seeders || 0;
+        const seedersB = b.seeders || 0;
 
-        if (scoreA !== scoreB) {
-            return scoreB - scoreA; // Sort by quality score first
+        if (seedersA !== seedersB) {
+            return seedersB - seedersA; // Sort by seeders first (most to least)
         } else {
-            // If quality scores are equal, sort by seeders
-            return (b.seeders || 0) - (a.seeders || 0);
+            // If seeders are equal, sort by quality score
+            const scoreA = calculateQualityScore(a);
+            const scoreB = calculateQualityScore(b);
+            return scoreB - scoreA; // Sort by quality score (highest to lowest)
         }
     });
 
@@ -626,7 +628,7 @@ async function getStreams(type, id) {
     const streams = topTorrents.map(torrentContent => {
         // Construct the Stremio 'name' field: "Bitmagnet-{Resolution}"
         const resolutionForName = torrentContent.videoResolution ? torrentContent.videoResolution.replace('V', '') : 'Local';
-        const streamName = `Bitmagnet-${resolutionForName}`;
+        const streamName = `p2p-BitMagnet 🧲`; // Updated name with P2P icon
 
         // Construct the Stremio 'title' field: "Content Title (Year)" or "SXXEXX Content Title"
         let baseContentTitle = (combinedMetadata && (combinedMetadata.title || combinedMetadata.name)) ? 
@@ -645,60 +647,119 @@ async function getStreams(type, id) {
             streamTitle = baseContentTitle; // Fallback if year/season/episode not available or applicable
         }
 
-        // Reconstruct the details string to append to the title
+        // Reconstruct the details string to append to the title with icons and less verbiage
         const details = [];
 
-        // Quality: BluRay | HEVC | 10bit
-        const qualityDetails = [];
-        if (torrentContent.videoSource) qualityDetails.push(torrentContent.videoSource);
-        if (torrentContent.videoCodec) qualityDetails.push(torrentContent.videoCodec);
-        if (torrentContent.videoModifier) qualityDetails.push(torrentContent.videoModifier);
-        if ((torrentContent.torrent.tagNames && torrentContent.torrent.tagNames.some(tag => tag.toLowerCase().includes('10bit'))) || torrentContent.torrent.name.toLowerCase().includes('10bit')) {
-            qualityDetails.push('10bit');
-        }
-        if (qualityDetails.length > 0) {
-            details.push(`Quality: ${qualityDetails.join(' | ')}`);
-        }
-
-        // Size: 5.75 GiB | YTS
-        const sizeGB = (torrentContent.torrent.size / (1024 * 1024 * 1024)).toFixed(2);
-        let sizeInfo = `${sizeGB} GiB`;
-        const knownSources = ['yts', 'dmm', 'rarbg', 'ettv'];
-        const sourceTag = torrentContent.torrent.tagNames?.find(tag => knownSources.includes(tag.toLowerCase()));
-        if (sourceTag) {
-            sizeInfo += ` | ${sourceTag.toUpperCase()}`;
+        // Size: 💾 5.75G
+        const sizeGB = (torrentContent.torrent.size / (1024 * 1024 * 1024));
+        let sizeInfo;
+        if (sizeGB >= 1) {
+            sizeInfo = `💾 ${sizeGB.toFixed(1)}G`;
+        } else {
+            sizeInfo = `💾 ${(sizeGB * 1024).toFixed(0)}M`; // Convert to MB if less than 1GB
         }
         details.push(sizeInfo);
 
-        // Audio: DD 5.1
-        let audioQuality = 'Unknown Audio';
+        // Seeders: 👤 8
+        if (torrentContent.seeders !== undefined) {
+            details.push(`👤 ${torrentContent.seeders}`);
+        }
+
+        // Resolution: 📺 2160p
+        if (torrentContent.videoResolution) {
+            details.push(`📺 ${torrentContent.videoResolution.replace('V', '')}`);
+        }
+
+        // Codec: 🎬 x265
+        if (torrentContent.videoCodec) {
+            details.push(`🎬 ${torrentContent.videoCodec}`);
+        }
+
+        // Source/Modifier: 💿 WEB-DL (Prioritize Modifier if available, otherwise Source)
+        if (torrentContent.videoModifier) {
+            details.push(`💿 ${torrentContent.videoModifier}`);
+        } else if (torrentContent.videoSource) {
+            details.push(`💿 ${torrentContent.videoSource}`);
+        } else {
+             // Fallback for Source for series, if torrent.name contains common source identifiers
+            const torrentNameLower = torrentContent.torrent.name.toLowerCase();
+            if (torrentNameLower.includes('web-dl') || torrentNameLower.includes('webdl')) details.push(`💿 WEB-DL`);
+            else if (torrentNameLower.includes('bluray')) details.push(`💿 BluRay`);
+            else if (torrentNameLower.includes('hdrip')) details.push(`💿 HDRip`);
+            else if (torrentNameLower.includes('dvdrip')) details.push(`💿 DVDRip`);
+            else if (torrentNameLower.includes('hdtv')) details.push(`💿 HDTV`);
+            else if (torrentNameLower.includes('ts')) details.push(`💿 TS`);
+            else if (torrentNameLower.includes('cam')) details.push(`💿 CAM`);
+        }
+
+
+        // 10bit: ⭐ 10bit
+        if ((torrentContent.torrent.tagNames && torrentContent.torrent.tagNames.some(tag => tag.toLowerCase().includes('10bit'))) || torrentContent.torrent.name.toLowerCase().includes('10bit')) {
+            details.push(`⭐ 10bit`);
+        }
+
+        // Audio: 🔊 Atmos
+        let audioQuality = '';
         const torrentNameLower = torrentContent.torrent.name.toLowerCase();
         if (torrentNameLower.includes('atmos')) audioQuality = 'Atmos';
         else if (torrentNameLower.includes('dts-hd')) audioQuality = 'DTS-HD';
         else if (torrentNameLower.includes('truehd')) audioQuality = 'TrueHD';
         else if (torrentNameLower.includes('dts')) audioQuality = 'DTS';
-        else if (torrentNameLower.includes('eac3') || torrentNameLower.includes('ddp')) audioQuality = 'EAC3/DDP';
+        else if (torrentNameLower.includes('eac3') || torrentNameLower.includes('ddp')) audioQuality = 'EAC3'; // Simplified to EAC3
         else if (torrentNameLower.includes('ac3')) audioQuality = 'AC3';
         else if (torrentNameLower.includes('aac')) audioQuality = 'AAC';
-        else if (torrentNameLower.includes('dd 5.1') || torrentNameLower.includes('dolby digital 5.1')) audioQuality = 'DD 5.1';
-        else if (torrentNameLower.includes('2.0') || torrentNameLower.includes('stereo')) audioQuality = 'Stereo';
-        details.push(`Audio: ${audioQuality}`);
+        else if (torrentNameLower.includes('5.1')) audioQuality = '5.1'; // Simplified for DD 5.1
+        else if (torrentNameLower.includes('2.0') || torrentNameLower.includes('stereo')) audioQuality = '2.0'; // Simplified for Stereo
+        if (audioQuality) {
+            details.push(`🔊 ${audioQuality}`);
+        }
 
-        // Language: Latino|English|Tamil
+        // Language: 🗣️ ENG|TAM
         if (torrentContent.languages && torrentContent.languages.length > 0) {
-            details.push(`Lang: ${torrentContent.languages.map(lang => lang.name.toUpperCase()).join('|')}`);
-        } else {
-            details.push('Lang: Unknown');
+            const languageCodes = torrentContent.languages.map(lang => {
+                switch(lang.name.toLowerCase()) {
+                    case 'english': return 'ENG';
+                    case 'tamil': return 'TAM';
+                    case 'hindi': return 'HIN';
+                    case 'telugu': return 'TEL';
+                    case 'malayalam': return 'MAL';
+                    case 'kannada': return 'KAN';
+                    case 'french': return 'FRE';
+                    case 'spanish': return 'SPA';
+                    case 'german': return 'GER';
+                    case 'japanese': return 'JPN';
+                    case 'korean': return 'KOR';
+                    case 'mandarin': return 'MAN';
+                    case 'cantonese': return 'CAN';
+                    case 'arabic': return 'ARA';
+                    case 'russian': return 'RUS';
+                    case 'portuguese': return 'POR';
+                    case 'italian': return 'ITA';
+                    case 'dutch': return 'DUT';
+                    case 'swedish': return 'SWE';
+                    case 'norwegian': return 'NOR';
+                    case 'danish': return 'DAN';
+                    case 'finnish': return 'FIN';
+                    case 'polish': return 'POL';
+                    case 'turkish': return 'TUR';
+                    case 'thai': return 'THI';
+                    case 'vietnamese': return 'VIE';
+                    case 'indonesian': return 'IND';
+                    case 'hebrew': return 'HEB';
+                    case 'greek': return 'GRE';
+                    case 'czech': return 'CZE';
+                    case 'hungarian': return 'HUN';
+                    // Add more mappings as needed
+                    default: return lang.name.toUpperCase().substring(0, 3); // Take first 3 letters for unknown
+                }
+            });
+            details.push(`🗣️ ${languageCodes.join('|')}`);
         }
         
-        // Seeders: 8
-        if (torrentContent.seeders !== undefined) {
-            details.push(`Seeders: ${torrentContent.seeders}`);
-        }
 
         // Append all details to the streamTitle
         if (details.length > 0) {
-            streamTitle += ` | ${details.join(' | ')}`;
+            streamTitle += ` | ${details.filter(Boolean).join(' | ')}`; // Filter out any null/empty details before joining
         }
 
         let parsedMagnet;
