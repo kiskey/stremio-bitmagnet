@@ -555,8 +555,19 @@ async function getStreams(type, id) {
         }
     });
 
-    // Filter results for TV shows by season and episode
-    let relevantTorrents = bitMagnetResults;
+    // Filter results based on MAX_TORRENT_SIZE_GB
+    let filteredTorrents = bitMagnetResults;
+    const maxTorrentSizeGB = parseFloat(config.MAX_TORRENT_SIZE_GB);
+    if (!isNaN(maxTorrentSizeGB) && maxTorrentSizeGB > 0) {
+        filteredTorrents = bitMagnetResults.filter(torrentContent => {
+            const sizeGB = torrentContent.torrent.size / (1024 * 1024 * 1024);
+            return sizeGB <= maxTorrentSizeGB;
+        });
+        console.log(`Filtered to ${filteredTorrents.length} torrents after applying size limit (${maxTorrentSizeGB} GB).`);
+    }
+
+    // Now apply episode filtering on the already size-filtered torrents
+    let relevantTorrents = filteredTorrents; // Start with the size-filtered list
     if (type === 'series' && season && episode) {
         relevantTorrents = relevantTorrents.filter(torrentContent => {
             const parsedDataArray = torrentContent._parsedEpisodeData;
@@ -724,7 +735,6 @@ async function getStreams(type, id) {
             infoHash: torrentContent.infoHash,
             name: streamName,
             title: streamTitle, // Now includes all detailed info
-            // Removed 'description' field entirely
             type: torrentContent.contentType,
             quality: torrentContent.videoResolution ? torrentContent.videoResolution.replace('V', '') : 'Unknown',
             seeders: torrentContent.seeders,
