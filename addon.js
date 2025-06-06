@@ -634,8 +634,61 @@ async function getStreams(type, id) {
             streamTitle = baseContentTitle; // Fallback if year/season/episode not available or applicable
         }
 
-        // Removed the construction of descriptionParts and setting streamDescription
-        // as per the previous debugging step where it was hypothesized to cause issues.
+        // Reconstruct the details string to append to the title
+        const details = [];
+
+        // Quality: BluRay | HEVC | 10bit
+        const qualityDetails = [];
+        if (torrentContent.videoSource) qualityDetails.push(torrentContent.videoSource);
+        if (torrentContent.videoCodec) qualityDetails.push(torrentContent.videoCodec);
+        if (torrentContent.videoModifier) qualityDetails.push(torrentContent.videoModifier);
+        if ((torrentContent.torrent.tagNames && torrentContent.torrent.tagNames.some(tag => tag.toLowerCase().includes('10bit'))) || torrentContent.torrent.name.toLowerCase().includes('10bit')) {
+            qualityDetails.push('10bit');
+        }
+        if (qualityDetails.length > 0) {
+            details.push(`Quality: ${qualityDetails.join(' | ')}`);
+        }
+
+        // Size: 5.75 GiB | YTS
+        const sizeGB = (torrentContent.torrent.size / (1024 * 1024 * 1024)).toFixed(2);
+        let sizeInfo = `${sizeGB} GiB`;
+        const knownSources = ['yts', 'dmm', 'rarbg', 'ettv'];
+        const sourceTag = torrentContent.torrent.tagNames?.find(tag => knownSources.includes(tag.toLowerCase()));
+        if (sourceTag) {
+            sizeInfo += ` | ${sourceTag.toUpperCase()}`;
+        }
+        details.push(sizeInfo);
+
+        // Audio: DD 5.1
+        let audioQuality = 'Unknown Audio';
+        const torrentNameLower = torrentContent.torrent.name.toLowerCase();
+        if (torrentNameLower.includes('atmos')) audioQuality = 'Atmos';
+        else if (torrentNameLower.includes('dts-hd')) audioQuality = 'DTS-HD';
+        else if (torrentNameLower.includes('truehd')) audioQuality = 'TrueHD';
+        else if (torrentNameLower.includes('dts')) audioQuality = 'DTS';
+        else if (torrentNameLower.includes('eac3') || torrentNameLower.includes('ddp')) audioQuality = 'EAC3/DDP';
+        else if (torrentNameLower.includes('ac3')) audioQuality = 'AC3';
+        else if (torrentNameLower.includes('aac')) audioQuality = 'AAC';
+        else if (torrentNameLower.includes('dd 5.1') || torrentNameLower.includes('dolby digital 5.1')) audioQuality = 'DD 5.1';
+        else if (torrentNameLower.includes('2.0') || torrentNameLower.includes('stereo')) audioQuality = 'Stereo';
+        details.push(`Audio: ${audioQuality}`);
+
+        // Language: Latino|English|Tamil
+        if (torrentContent.languages && torrentContent.languages.length > 0) {
+            details.push(`Lang: ${torrentContent.languages.map(lang => lang.name.toUpperCase()).join('|')}`);
+        } else {
+            details.push('Lang: Unknown');
+        }
+        
+        // Seeders: 8
+        if (torrentContent.seeders !== undefined) {
+            details.push(`Seeders: ${torrentContent.seeders}`);
+        }
+
+        // Append all details to the streamTitle
+        if (details.length > 0) {
+            streamTitle += ` | ${details.join(' | ')}`;
+        }
 
         let parsedMagnet;
         const bitmagnetInfoHash = torrentContent.infoHash;
@@ -670,7 +723,7 @@ async function getStreams(type, id) {
         return {
             infoHash: torrentContent.infoHash,
             name: streamName,
-            title: streamTitle,
+            title: streamTitle, // Now includes all detailed info
             // Removed 'description' field entirely
             type: torrentContent.contentType,
             quality: torrentContent.videoResolution ? torrentContent.videoResolution.replace('V', '') : 'Unknown',
