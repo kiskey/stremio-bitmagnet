@@ -628,29 +628,25 @@ async function getStreams(type, id) {
     const streams = topTorrents.map(torrentContent => {
         // Construct the Stremio 'name' field: "Bitmagnet-{Resolution}"
         const resolutionForName = torrentContent.videoResolution ? torrentContent.videoResolution.replace('V', '') : 'Local';
-        const streamName = `p2p-BitMagnet 🧲`; // Updated name with P2P icon
+        const streamName = `BitMagnet 🧲`; // Updated name, removed "p2p-"
 
-        // Construct the Stremio 'title' field: "Content Title (Year)" or "SXXEXX Content Title"
-        let baseContentTitle = (combinedMetadata && (combinedMetadata.title || combinedMetadata.name)) ? 
-                                (combinedMetadata.title || combinedMetadata.name) : 
-                                imdbId; // Use combined metadata title or fallback to imdbId
-        
-        let streamTitle;
+        // Construct the Stremio 'title' field, split into multiple lines
+        let titleLine1;
         if (type === 'movie' && (combinedMetadata && (combinedMetadata.year || combinedMetadata.release_date || combinedMetadata.Year))) {
             const displayYear = combinedMetadata.year || 
                                 (combinedMetadata.release_date ? combinedMetadata.release_date.substring(0, 4) : 
                                 (combinedMetadata.Year ? combinedMetadata.Year.match(/\d{4}/)?.[0] : null));
-            streamTitle = `${baseContentTitle} (${displayYear})`;
+            titleLine1 = `${baseContentTitle} (${displayYear})`;
         } else if (type === 'series' && season && episode) {
-            streamTitle = `S${String(season).padStart(2, '0')}E${String(episode).padStart(2, '0')} ${baseContentTitle}`;
+            titleLine1 = `S${String(season).padStart(2, '0')}E${String(episode).padStart(2, '0')} ${baseContentTitle}`;
         } else {
-            streamTitle = baseContentTitle; // Fallback if year/season/episode not available or applicable
+            titleLine1 = baseContentTitle; // Fallback if year/season/episode not available or applicable
         }
 
-        // Reconstruct the details string to append to the title with icons and less verbiage
-        const details = [];
+        const detailsLine2 = [];
+        const detailsLine3 = [];
 
-        // Size: 💾 5.75G
+        // Line 2: Size, Seeders, Resolution
         const sizeGB = (torrentContent.torrent.size / (1024 * 1024 * 1024));
         let sizeInfo;
         if (sizeGB >= 1) {
@@ -658,108 +654,81 @@ async function getStreams(type, id) {
         } else {
             sizeInfo = `💾 ${(sizeGB * 1024).toFixed(0)}M`; // Convert to MB if less than 1GB
         }
-        details.push(sizeInfo);
+        detailsLine2.push(sizeInfo);
 
-        // Seeders: 👤 8
         if (torrentContent.seeders !== undefined) {
-            details.push(`👤 ${torrentContent.seeders}`);
+            detailsLine2.push(`👤 ${torrentContent.seeders}`);
         }
 
-        // Resolution: 📺 2160p
         if (torrentContent.videoResolution) {
-            details.push(`📺 ${torrentContent.videoResolution.replace('V', '')}`);
+            detailsLine2.push(`📺 ${torrentContent.videoResolution.replace('V', '')}`);
         }
 
-        // Codec: 🎬 x265
+        // Line 3: Codec, Source/Modifier, 10bit, Audio, Language
         if (torrentContent.videoCodec) {
-            details.push(`🎬 ${torrentContent.videoCodec}`);
+            detailsLine3.push(`🎬 ${torrentContent.videoCodec}`);
         }
 
-        // Source/Modifier: 💿 WEB-DL (Prioritize Modifier if available, otherwise Source)
         if (torrentContent.videoModifier) {
-            details.push(`💿 ${torrentContent.videoModifier}`);
+            detailsLine3.push(`💿 ${torrentContent.videoModifier}`);
         } else if (torrentContent.videoSource) {
-            details.push(`💿 ${torrentContent.videoSource}`);
+            detailsLine3.push(`💿 ${torrentContent.videoSource}`);
         } else {
-             // Fallback for Source for series, if torrent.name contains common source identifiers
             const torrentNameLower = torrentContent.torrent.name.toLowerCase();
-            if (torrentNameLower.includes('web-dl') || torrentNameLower.includes('webdl')) details.push(`💿 WEB-DL`);
-            else if (torrentNameLower.includes('bluray')) details.push(`💿 BluRay`);
-            else if (torrentNameLower.includes('hdrip')) details.push(`💿 HDRip`);
-            else if (torrentNameLower.includes('dvdrip')) details.push(`💿 DVDRip`);
-            else if (torrentNameLower.includes('hdtv')) details.push(`💿 HDTV`);
-            else if (torrentNameLower.includes('ts')) details.push(`💿 TS`);
-            else if (torrentNameLower.includes('cam')) details.push(`💿 CAM`);
+            if (torrentNameLower.includes('web-dl') || torrentNameLower.includes('webdl')) detailsLine3.push(`💿 WEB-DL`);
+            else if (torrentNameLower.includes('bluray')) detailsLine3.push(`💿 BluRay`);
+            else if (torrentNameLower.includes('hdrip')) detailsLine3.push(`💿 HDRip`);
+            else if (torrentNameLower.includes('dvdrip')) detailsLine3.push(`💿 DVDRip`);
+            else if (torrentNameLower.includes('hdtv')) detailsLine3.push(`💿 HDTV`);
+            else if (torrentNameLower.includes('ts')) detailsLine3.push(`💿 TS`);
+            else if (torrentNameLower.includes('cam')) detailsLine3.push(`💿 CAM`);
         }
 
-
-        // 10bit: ⭐ 10bit
         if ((torrentContent.torrent.tagNames && torrentContent.torrent.tagNames.some(tag => tag.toLowerCase().includes('10bit'))) || torrentContent.torrent.name.toLowerCase().includes('10bit')) {
-            details.push(`⭐ 10bit`);
+            detailsLine3.push(`⭐ 10bit`);
         }
 
-        // Audio: 🔊 Atmos
         let audioQuality = '';
         const torrentNameLower = torrentContent.torrent.name.toLowerCase();
         if (torrentNameLower.includes('atmos')) audioQuality = 'Atmos';
         else if (torrentNameLower.includes('dts-hd')) audioQuality = 'DTS-HD';
         else if (torrentNameLower.includes('truehd')) audioQuality = 'TrueHD';
         else if (torrentNameLower.includes('dts')) audioQuality = 'DTS';
-        else if (torrentNameLower.includes('eac3') || torrentNameLower.includes('ddp')) audioQuality = 'EAC3'; // Simplified to EAC3
+        else if (torrentNameLower.includes('eac3') || torrentNameLower.includes('ddp')) audioQuality = 'EAC3';
         else if (torrentNameLower.includes('ac3')) audioQuality = 'AC3';
         else if (torrentNameLower.includes('aac')) audioQuality = 'AAC';
-        else if (torrentNameLower.includes('5.1')) audioQuality = '5.1'; // Simplified for DD 5.1
-        else if (torrentNameLower.includes('2.0') || torrentNameLower.includes('stereo')) audioQuality = '2.0'; // Simplified for Stereo
+        else if (torrentNameLower.includes('5.1')) audioQuality = '5.1';
+        else if (torrentNameLower.includes('2.0') || torrentNameLower.includes('stereo')) audioQuality = '2.0';
         if (audioQuality) {
-            details.push(`🔊 ${audioQuality}`);
+            detailsLine3.push(`🔊 ${audioQuality}`);
         }
 
-        // Language: 🗣️ ENG|TAM
         if (torrentContent.languages && torrentContent.languages.length > 0) {
             const languageCodes = torrentContent.languages.map(lang => {
                 switch(lang.name.toLowerCase()) {
-                    case 'english': return 'ENG';
-                    case 'tamil': return 'TAM';
-                    case 'hindi': return 'HIN';
-                    case 'telugu': return 'TEL';
-                    case 'malayalam': return 'MAL';
-                    case 'kannada': return 'KAN';
-                    case 'french': return 'FRE';
-                    case 'spanish': return 'SPA';
-                    case 'german': return 'GER';
-                    case 'japanese': return 'JPN';
-                    case 'korean': return 'KOR';
-                    case 'mandarin': return 'MAN';
-                    case 'cantonese': return 'CAN';
-                    case 'arabic': return 'ARA';
-                    case 'russian': return 'RUS';
-                    case 'portuguese': return 'POR';
-                    case 'italian': return 'ITA';
-                    case 'dutch': return 'DUT';
-                    case 'swedish': return 'SWE';
-                    case 'norwegian': return 'NOR';
-                    case 'danish': return 'DAN';
-                    case 'finnish': return 'FIN';
-                    case 'polish': return 'POL';
-                    case 'turkish': return 'TUR';
-                    case 'thai': return 'THI';
-                    case 'vietnamese': return 'VIE';
-                    case 'indonesian': return 'IND';
-                    case 'hebrew': return 'HEB';
-                    case 'greek': return 'GRE';
-                    case 'czech': return 'CZE';
+                    case 'english': return 'ENG'; case 'tamil': return 'TAM'; case 'hindi': return 'HIN';
+                    case 'telugu': return 'TEL'; case 'malayalam': return 'MAL'; case 'kannada': return 'KAN';
+                    case 'french': return 'FRE'; case 'spanish': return 'SPA'; case 'german': return 'GER';
+                    case 'japanese': return 'JPN'; case 'korean': return 'KOR'; case 'mandarin': return 'MAN';
+                    case 'cantonese': return 'CAN'; case 'arabic': return 'ARA'; case 'russian': return 'RUS';
+                    case 'portuguese': return 'POR'; case 'italian': return 'ITA'; case 'dutch': return 'DUT';
+                    case 'swedish': return 'SWE'; case 'norwegian': return 'NOR'; case 'danish': return 'DAN';
+                    case 'finnish': return 'FIN'; case 'polish': return 'POL'; case 'turkish': return 'TUR';
+                    case 'thai': return 'THI'; case 'vietnamese': return 'VIE'; case 'indonesian': return 'IND';
+                    case 'hebrew': return 'HEB'; case 'greek': return 'GRE'; case 'czech': return 'CZE';
                     case 'hungarian': return 'HUN';
-                    // Add more mappings as needed
-                    default: return lang.name.toUpperCase().substring(0, 3); // Take first 3 letters for unknown
+                    default: return lang.name.toUpperCase().substring(0, 3);
                 }
             });
-            details.push(`🗣️ ${languageCodes.join('|')}`);
+            detailsLine3.push(`🗣️ ${languageCodes.join('|')}`);
         }
         
-
-        // Append all details to the streamTitle
-        if (details.length > 0) {
-            streamTitle += ` | ${details.filter(Boolean).join(' | ')}`; // Filter out any null/empty details before joining
+        let streamTitle = titleLine1;
+        if (detailsLine2.length > 0) {
+            streamTitle += `\n${detailsLine2.filter(Boolean).join(' | ')}`;
+        }
+        if (detailsLine3.length > 0) {
+            streamTitle += `\n${detailsLine3.filter(Boolean).join(' | ')}`;
         }
 
         let parsedMagnet;
