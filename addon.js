@@ -21,7 +21,7 @@ function getManifest() {
     return {
         id: 'org.bitmagnet.stremio.addon',
         version: '1.0.0',
-        name: 'BitMagnet Stremio Addon',
+        name: 'BitMagnet P2P',
         description: 'Stremio addon to find and prioritize torrents from BitMagnet GraphQL API, leveraging TMDB/IMDb for metadata.',
         resources: ['catalog', 'meta', 'stream'],
         types: ['movie', 'series'],
