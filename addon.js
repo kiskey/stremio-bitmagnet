@@ -77,7 +77,7 @@ async function fetchCombinedMetadata(imdbId, type) {
 
     // Prioritize TMDB data if available and has a title/name
     if (tmdbData && (tmdbData.title || tmdbData.name)) {
-        console.log(`Metadata found (TMDB primary) for ${imdbId}.`);
+        console.log(`Metadata found (TMDB primary) for ${imdbId).`);
         // Ensure TMDB data also has a 'year' property derived from its dates for consistency
         const tmdbYear = tmdbData.release_date ? parseInt(tmdbData.release_date.substring(0, 4), 10) :
                          (tmdbData.first_air_date ? parseInt(tmdbData.first_air_date.substring(0, 4), 10) : null);
@@ -86,7 +86,7 @@ async function fetchCombinedMetadata(imdbId, type) {
 
     // Fallback to OMDb data if TMDB failed or didn't provide enough info
     if (omdbData && omdbData.Title && omdbData.Response === 'True') {
-        console.log(`Metadata found (OMDb fallback) for ${imdbId}.`);
+        console.log(`Metadata found (OMDb fallback) for ${imdbId).`);
         // Map OMDb data to a structure similar to TMDB for consistency
         let omdbYear = null;
         // Prioritize parsing from 'Released' field as it's a full date string, which is more reliable for exact year.
@@ -133,7 +133,7 @@ async function fetchCombinedMetadata(imdbId, type) {
         };
     }
 
-    console.warn(`No metadata found from TMDB or OMDb for ${imdbId}.`);
+    console.warn(`No metadata found from TMDB or OMDb for ${imdbId).`);
     return null;
 }
 
@@ -431,6 +431,35 @@ function parseTorrentEpisodeData(torrentName, torrentContentEpisodes) {
 }
 
 /**
+ * Determines if a torrent is considered "low quality" based on its resolution and common low-quality tags.
+ * @param {object} torrentContent - The torrent content object from BitMagnet.
+ * @returns {boolean} True if the torrent is low quality, false otherwise.
+ */
+function isLowQualityTorrent(torrentContent) {
+    const torrentNameLower = torrentContent.torrent.name.toLowerCase();
+    const videoResolution = torrentContent.videoResolution;
+    const videoSource = torrentContent.videoSource ? torrentContent.videoSource.toLowerCase() : '';
+    const videoModifier = torrentContent.videoModifier ? torrentContent.videoModifier.toLowerCase() : '';
+
+    // Check for low resolutions
+    if (videoResolution) {
+        const resNumeric = parseInt(videoResolution.replace('V', ''), 10);
+        if (resNumeric <= 576 && resNumeric !== 720 && resNumeric !== 1080 && resNumeric !== 1440 && resNumeric !== 2160 && resNumeric !== 4320) {
+            return true;
+        }
+    }
+
+    // Check for low-quality sources/modifiers/keywords
+    const lowQualityKeywords = ['telecine', 'ts', 'cam', 'hd-ts', 'hd-cam', 'web-rip'];
+    if (lowQualityKeywords.some(keyword => torrentNameLower.includes(keyword) || videoSource.includes(keyword) || videoModifier.includes(keyword))) {
+        return true;
+    }
+
+    return false;
+}
+
+
+/**
  * Handles stream requests.
  * @param {string} type - 'movie' or 'series'.
  * @param {string} id - IMDb ID (e.g., 'tt1234567' or 'tt1234567:1:1' for series).
@@ -474,9 +503,8 @@ async function getStreams(type, id) {
         return { streams: [] };
     }
 
-    // Fallback if no metadata could be found at all.
-    // Use the raw IMDb ID as a search term if no title is available.
-    const titleForSearch = (combinedMetadata && (combinedMetadata.title || combinedMetadata.name)) ? 
+    // Define baseContentTitle here so it's accessible within the map function below
+    const baseContentTitle = (combinedMetadata && (combinedMetadata.title || combinedMetadata.name)) ? 
                            (combinedMetadata.title || combinedMetadata.name) : 
                            imdbId;
     
@@ -492,7 +520,7 @@ async function getStreams(type, id) {
     }
     
     // Ensure titleForSearch is not empty or just spaces
-    if (!titleForSearch || titleForSearch.trim() === '') {
+    if (!baseContentTitle || baseContentTitle.trim() === '') {
         console.warn(`No valid title could be determined for ${imdbId}. Cannot search BitMagnet.`);
         return { streams: [] };
     }
@@ -502,7 +530,7 @@ async function getStreams(type, id) {
 
     // Strategy 1: Broad Search Term (title + year in queryString, no year filter in facets)
     // This often yields better results if BitMagnet's internal indexing isn't strict on year facets.
-    const broadQueryString = yearForSearch ? `${titleForSearch} ${yearForSearch}` : titleForSearch;
+    const broadQueryString = yearForSearch ? `${baseContentTitle} ${yearForSearch}` : baseContentTitle;
     try {
         const broadResults = await searchBitMagnet({
             queryString: broadQueryString,
@@ -525,11 +553,11 @@ async function getStreams(type, id) {
     if (bitMagnetResults.length === 0 && yearForSearch !== null && !isNaN(yearForSearch)) {
         try {
             const fallbackResults = await searchBitMagnet({
-                queryString: titleForSearch, // Just the title
+                queryString: baseContentTitle, // Just the title
                 releaseYear: yearForSearch, // Use the specific year filter
                 contentType: type === 'movie' ? 'movie' : 'tv_show',
             });
-            console.log(`Fallback search for "${titleForSearch}" with year ${yearForSearch} found ${fallbackResults.length} results.`);
+            console.log(`Fallback search for "${baseContentTitle}" with year ${yearForSearch} found ${fallbackResults.length} results.`);
             fallbackResults.forEach(item => {
                 if (!seenInfoHashes.has(item.infoHash)) {
                     bitMagnetResults.push(item);
@@ -537,13 +565,13 @@ async function getStreams(type, id) {
                 }
             });
         } catch (error) {
-            console.error(`Error in fallback BitMagnet search for "${titleForSearch}" (${yearForSearch}):`, error.message);
+            console.error(`Error in fallback BitMagnet search for "${baseContentTitle}" (${yearForSearch}):`, error.message);
         }
     }
     
     // Final check after all strategies
     if (bitMagnetResults.length === 0) {
-        console.log(`No BitMagnet results found for "${titleForSearch}" (${yearForSearch || 'Unknown Year'}) after all strategies.`);
+        console.log(`No BitMagnet results found for "${baseContentTitle}" (${yearForSearch || 'Unknown Year'}) after all strategies.`);
         return { streams: [] };
     }
 
@@ -555,11 +583,29 @@ async function getStreams(type, id) {
         }
     });
 
-    // Filter results based on MAX_TORRENT_SIZE_GB
-    let filteredTorrents = bitMagnetResults;
+    // --- NEW CONDITIONAL QUALITY FILTERING ---
+    let hasHighQualityTorrents = false;
+    for (const torrentContent of bitMagnetResults) {
+        if (!isLowQualityTorrent(torrentContent)) {
+            hasHighQualityTorrents = true;
+            break;
+        }
+    }
+
+    let conditionallyFilteredTorrents = bitMagnetResults;
+    if (hasHighQualityTorrents) {
+        conditionallyFilteredTorrents = bitMagnetResults.filter(torrentContent => !isLowQualityTorrent(torrentContent));
+        console.log(`Removed low-quality torrents. Remaining: ${conditionallyFilteredTorrents.length}`);
+    } else {
+        console.log('No high-quality torrents found, including all qualities.');
+    }
+    // --- END NEW CONDITIONAL QUALITY FILTERING ---
+
+    // Filter results based on MAX_TORRENT_SIZE_GB (applies to conditionally filtered list)
+    let filteredTorrents = conditionallyFilteredTorrents;
     const maxTorrentSizeGB = parseFloat(config.MAX_TORRENT_SIZE_GB);
     if (!isNaN(maxTorrentSizeGB) && maxTorrentSizeGB > 0) {
-        filteredTorrents = bitMagnetResults.filter(torrentContent => {
+        filteredTorrents = conditionallyFilteredTorrents.filter(torrentContent => {
             const sizeGB = torrentContent.torrent.size / (1024 * 1024 * 1024);
             return sizeGB <= maxTorrentSizeGB;
         });
@@ -630,64 +676,69 @@ async function getStreams(type, id) {
         const resolutionForName = torrentContent.videoResolution ? torrentContent.videoResolution.replace('V', '') : 'Local';
         const streamName = `BitMagnet 🧲`; // Updated name, removed "p2p-"
 
-        // Construct the Stremio 'title' field, split into multiple lines
-        let titleLine1;
+        // Construct the Stremio 'title' field, now as a single line
+        let titleParts = [];
+        let mainTitle = '';
+
         if (type === 'movie' && (combinedMetadata && (combinedMetadata.year || combinedMetadata.release_date || combinedMetadata.Year))) {
             const displayYear = combinedMetadata.year || 
                                 (combinedMetadata.release_date ? combinedMetadata.release_date.substring(0, 4) : 
                                 (combinedMetadata.Year ? combinedMetadata.Year.match(/\d{4}/)?.[0] : null));
-            titleLine1 = `${baseContentTitle} (${displayYear})`;
+            mainTitle = `${baseContentTitle} (${displayYear})`;
         } else if (type === 'series' && season && episode) {
-            titleLine1 = `S${String(season).padStart(2, '0')}E${String(episode).padStart(2, '0')} ${baseContentTitle}`;
+            mainTitle = `S${String(season).padStart(2, '0')}E${String(episode).padStart(2, '0')} ${baseContentTitle}`;
         } else {
-            titleLine1 = baseContentTitle; // Fallback if year/season/episode not available or applicable
+            mainTitle = baseContentTitle;
         }
+        titleParts.push(mainTitle);
 
-        const detailsLine2 = [];
-        const detailsLine3 = [];
-
-        // Line 2: Size, Seeders, Resolution
+        // Add Size
         const sizeGB = (torrentContent.torrent.size / (1024 * 1024 * 1024));
         let sizeInfo;
         if (sizeGB >= 1) {
             sizeInfo = `💾 ${sizeGB.toFixed(1)}G`;
         } else {
-            sizeInfo = `💾 ${(sizeGB * 1024).toFixed(0)}M`; // Convert to MB if less than 1GB
+            sizeInfo = `💾 ${(sizeGB * 1024).toFixed(0)}M`;
         }
-        detailsLine2.push(sizeInfo);
+        titleParts.push(sizeInfo);
 
+        // Add Seeders
         if (torrentContent.seeders !== undefined) {
-            detailsLine2.push(`👤 ${torrentContent.seeders}`);
+            titleParts.push(`👤 ${torrentContent.seeders}`);
         }
 
+        // Add Resolution
         if (torrentContent.videoResolution) {
-            detailsLine2.push(`📺 ${torrentContent.videoResolution.replace('V', '')}`);
+            titleParts.push(`📺 ${torrentContent.videoResolution.replace('V', '')}`);
         }
 
-        // Line 3: Codec, Source/Modifier, 10bit, Audio, Language
+        // Add Codec
         if (torrentContent.videoCodec) {
-            detailsLine3.push(`🎬 ${torrentContent.videoCodec}`);
+            titleParts.push(`🎬 ${torrentContent.videoCodec}`);
         }
 
+        // Add Source/Modifier
         if (torrentContent.videoModifier) {
-            detailsLine3.push(`💿 ${torrentContent.videoModifier}`);
+            titleParts.push(`💿 ${torrentContent.videoModifier}`);
         } else if (torrentContent.videoSource) {
-            detailsLine3.push(`💿 ${torrentContent.videoSource}`);
+            titleParts.push(`💿 ${torrentContent.videoSource}`);
         } else {
             const torrentNameLower = torrentContent.torrent.name.toLowerCase();
-            if (torrentNameLower.includes('web-dl') || torrentNameLower.includes('webdl')) detailsLine3.push(`💿 WEB-DL`);
-            else if (torrentNameLower.includes('bluray')) detailsLine3.push(`💿 BluRay`);
-            else if (torrentNameLower.includes('hdrip')) detailsLine3.push(`💿 HDRip`);
-            else if (torrentNameLower.includes('dvdrip')) detailsLine3.push(`💿 DVDRip`);
-            else if (torrentNameLower.includes('hdtv')) detailsLine3.push(`💿 HDTV`);
-            else if (torrentNameLower.includes('ts')) detailsLine3.push(`💿 TS`);
-            else if (torrentNameLower.includes('cam')) detailsLine3.push(`💿 CAM`);
+            if (torrentNameLower.includes('web-dl') || torrentNameLower.includes('webdl')) titleParts.push(`💿 WEB-DL`);
+            else if (torrentNameLower.includes('bluray')) titleParts.push(`💿 BluRay`);
+            else if (torrentNameLower.includes('hdrip')) titleParts.push(`💿 HDRip`);
+            else if (torrentNameLower.includes('dvdrip')) titleParts.push(`💿 DVDRip`);
+            else if (torrentNameLower.includes('hdtv')) titleParts.push(`💿 HDTV`);
+            else if (torrentNameLower.includes('ts')) titleParts.push(`💿 TS`);
+            else if (torrentNameLower.includes('cam')) titleParts.push(`💿 CAM`);
         }
 
+        // Add 10bit
         if ((torrentContent.torrent.tagNames && torrentContent.torrent.tagNames.some(tag => tag.toLowerCase().includes('10bit'))) || torrentContent.torrent.name.toLowerCase().includes('10bit')) {
-            detailsLine3.push(`⭐ 10bit`);
+            titleParts.push(`⭐ 10bit`);
         }
 
+        // Add Audio
         let audioQuality = '';
         const torrentNameLower = torrentContent.torrent.name.toLowerCase();
         if (torrentNameLower.includes('atmos')) audioQuality = 'Atmos';
@@ -700,9 +751,10 @@ async function getStreams(type, id) {
         else if (torrentNameLower.includes('5.1')) audioQuality = '5.1';
         else if (torrentNameLower.includes('2.0') || torrentNameLower.includes('stereo')) audioQuality = '2.0';
         if (audioQuality) {
-            detailsLine3.push(`🔊 ${audioQuality}`);
+            titleParts.push(`🔊 ${audioQuality}`);
         }
 
+        // Add Language
         if (torrentContent.languages && torrentContent.languages.length > 0) {
             const languageCodes = torrentContent.languages.map(lang => {
                 switch(lang.name.toLowerCase()) {
@@ -720,16 +772,10 @@ async function getStreams(type, id) {
                     default: return lang.name.toUpperCase().substring(0, 3);
                 }
             });
-            detailsLine3.push(`🗣️ ${languageCodes.join('|')}`);
+            titleParts.push(`🗣️ ${languageCodes.join('|')}`);
         }
         
-        let streamTitle = titleLine1;
-        if (detailsLine2.length > 0) {
-            streamTitle += `\n${detailsLine2.filter(Boolean).join(' | ')}`;
-        }
-        if (detailsLine3.length > 0) {
-            streamTitle += `\n${detailsLine3.filter(Boolean).join(' | ')}`;
-        }
+        let streamTitle = titleParts.filter(Boolean).join(' | '); // Join all parts on a single line
 
         let parsedMagnet;
         const bitmagnetInfoHash = torrentContent.infoHash;
