@@ -672,11 +672,11 @@ async function getStreams(type, id) {
     const publicTrackers = await getTrackers();
 
     const streams = topTorrents.map(torrentContent => {
-        // Construct the Stremio 'name' field: "Bitmagnet-{Resolution}"
-        const resolutionForName = torrentContent.videoResolution ? torrentContent.videoResolution.replace('V', '') : 'Local';
-        const streamName = `BitMagnet �`; // Updated name, removed "p2p-"
+        // Construct the Stremio 'name' field: "Bitmagnet{Emoji}-{Resolution}"
+        const resolution = torrentContent.videoResolution ? torrentContent.videoResolution.replace('V', '') : 'Unknown';
+        const streamName = `BitMagnet 🧲-${resolution}`; // Moved resolution here
 
-        // Construct the Stremio 'title' field, now as a single line
+        // Construct the Stremio 'title' field, now as a single line with other metadata
         let titleParts = [];
         let mainTitle = '';
 
@@ -707,10 +707,7 @@ async function getStreams(type, id) {
             titleParts.push(`👤 ${torrentContent.seeders}`);
         }
 
-        // Add Resolution
-        if (torrentContent.videoResolution) {
-            titleParts.push(`📺 ${torrentContent.videoResolution.replace('V', '')}`);
-        }
+        // Removed Resolution from here as it's now in stream.name
 
         // Add Codec
         if (torrentContent.videoCodec) {
