@@ -575,7 +575,7 @@ async function getStreams(type, id) {
         return { streams: [] };
     }
 
-    // First, parse episode data for each torrent in the combined results
+    // 1. Parse episode data for each torrent in the combined results
     bitMagnetResults.forEach(torrentContent => {
         if (type === 'series') {
             torrentContent._parsedEpisodeData = parseTorrentEpisodeData(torrentContent.torrent.name, torrentContent.episodes);
@@ -583,37 +583,45 @@ async function getStreams(type, id) {
         }
     });
 
-    // --- NEW CONDITIONAL QUALITY FILTERING ---
+    // 2. Filter results based on MAX_TORRENT_SIZE_GB
+    let currentTorrents = bitMagnetResults; // Start with all results
+    const maxTorrentSizeGB = parseFloat(config.MAX_TORRENT_SIZE_GB);
+    if (!isNaN(maxTorrentSizeGB) && maxTorrentSizeGB > 0) {
+        currentTorrents = currentTorrents.filter(torrentContent => {
+            const sizeGB = torrentContent.torrent.size / (1024 * 1024 * 1024);
+            return sizeGB <= maxTorrentSizeGB;
+        });
+        console.log(`Filtered to ${currentTorrents.length} torrents after applying size limit (${maxTorrentSizeGB} GB).`);
+    }
+
+    // 3. Sort by seeders DESC (Primary sort based on current list)
+    currentTorrents.sort((a, b) => {
+        const seedersA = a.seeders || 0;
+        const seedersB = b.seeders || 0;
+        return seedersB - seedersA; // Sort by seeders first (most to least)
+    });
+    console.log(`Sorted by seeders. First few:`, currentTorrents.slice(0, 5).map(t => ({ name: t.torrent.name, seeders: t.seeders })));
+
+
+    // 4. Conditional Quality Filtering (applied to the seeders-sorted list)
     let hasHighQualityTorrents = false;
-    for (const torrentContent of bitMagnetResults) {
+    for (const torrentContent of currentTorrents) { // Check within the current list
         if (!isLowQualityTorrent(torrentContent)) {
             hasHighQualityTorrents = true;
             break;
         }
     }
 
-    let conditionallyFilteredTorrents = bitMagnetResults;
     if (hasHighQualityTorrents) {
-        conditionallyFilteredTorrents = bitMagnetResults.filter(torrentContent => !isLowQualityTorrent(torrentContent));
-        console.log(`Removed low-quality torrents. Remaining: ${conditionallyFilteredTorrents.length}`);
+        currentTorrents = currentTorrents.filter(torrentContent => !isLowQualityTorrent(torrentContent));
+        console.log(`Removed low-quality torrents after seeders sort. Remaining: ${currentTorrents.length}`);
     } else {
-        console.log('No high-quality torrents found, including all qualities.');
-    }
-    // --- END NEW CONDITIONAL QUALITY FILTERING ---
-
-    // Filter results based on MAX_TORRENT_SIZE_GB (applies to conditionally filtered list)
-    let filteredTorrents = conditionallyFilteredTorrents;
-    const maxTorrentSizeGB = parseFloat(config.MAX_TORRENT_SIZE_GB);
-    if (!isNaN(maxTorrentSizeGB) && maxTorrentSizeGB > 0) {
-        filteredTorrents = conditionallyFilteredTorrents.filter(torrentContent => {
-            const sizeGB = torrentContent.torrent.size / (1024 * 1024 * 1024);
-            return sizeGB <= maxTorrentSizeGB;
-        });
-        console.log(`Filtered to ${filteredTorrents.length} torrents after applying size limit (${maxTorrentSizeGB} GB).`);
+        console.log('No high-quality torrents found after seeders sort, including all qualities.');
     }
 
-    // Now apply episode filtering on the already size-filtered torrents
-    let relevantTorrents = filteredTorrents; // Start with the size-filtered list
+
+    // 5. Apply episode filtering (for series) to the conditionally quality-filtered list
+    let relevantTorrents = currentTorrents;
     if (type === 'series' && season && episode) {
         relevantTorrents = relevantTorrents.filter(torrentContent => {
             const parsedDataArray = torrentContent._parsedEpisodeData;
@@ -649,22 +657,16 @@ async function getStreams(type, id) {
         return { streams: [] };
     }
 
-    // Primary sort by seeders (descending), secondary sort by quality score (descending)
+    // 6. Re-Sort by Quality Score (purely primary sort on this final list)
     relevantTorrents.sort((a, b) => {
-        const seedersA = a.seeders || 0;
-        const seedersB = b.seeders || 0;
-
-        if (seedersA !== seedersB) {
-            return seedersB - seedersA; // Sort by seeders first (most to least)
-        } else {
-            // If seeders are equal, sort by quality score
-            const scoreA = calculateQualityScore(a);
-            const scoreB = calculateQualityScore(b);
-            return scoreB - scoreA; // Sort by quality score (highest to lowest)
-        }
+        const scoreA = calculateQualityScore(a);
+        const scoreB = calculateQualityScore(b);
+        return scoreB - scoreA; // Sort by quality score (highest to lowest)
     });
+    console.log(`Final list re-sorted by quality. First few:`, relevantTorrents.slice(0, 5).map(t => ({ name: t.torrent.name, score: calculateQualityScore(t), seeders: t.seeders })));
 
-    // Limit results to a configurable number
+
+    // 7. Limit results to a configurable number
     const maxStreams = parseInt(config.MAX_STREAMS_PER_ITEM, 10) || 10; // Default to 10 if not set or invalid
     const topTorrents = relevantTorrents.slice(0, maxStreams);
 
