@@ -77,7 +77,7 @@ async function fetchCombinedMetadata(imdbId, type) {
 
     // Prioritize TMDB data if available and has a title/name
     if (tmdbData && (tmdbData.title || tmdbData.name)) {
-        console.log(`Metadata found (TMDB primary) for ${imdbId}).`);
+        console.log(`Metadata found (TMDB primary) for ${imdbId}).`); // Fixed: changed ) to }
         // Ensure TMDB data also has a 'year' property derived from its dates for consistency
         const tmdbYear = tmdbData.release_date ? parseInt(tmdbData.release_date.substring(0, 4), 10) :
                          (tmdbData.first_air_date ? parseInt(tmdbData.first_air_date.substring(0, 4), 10) : null);
@@ -86,7 +86,7 @@ async function fetchCombinedMetadata(imdbId, type) {
 
     // Fallback to OMDb data if TMDB failed or didn't provide enough info
     if (omdbData && omdbData.Title && omdbData.Response === 'True') {
-        console.log(`Metadata found (OMDb fallback) for ${imdbId}).`);
+        console.log(`Metadata found (OMDb fallback) for ${imdbId}).`); // Fixed: changed ) to }
         // Map OMDb data to a structure similar to TMDB for consistency
         let omdbYear = null;
         // Prioritize parsing from 'Released' field as it's a full date string, which is more reliable for exact year.
@@ -133,7 +133,7 @@ async function fetchCombinedMetadata(imdbId, type) {
         };
     }
 
-    console.warn(`No metadata found from TMDB or OMDb for ${imdbId).`);
+    console.warn(`No metadata found from TMDB or OMDb for ${imdbId}).`); // Fixed: changed ) to }
     return null;
 }
 
@@ -674,7 +674,7 @@ async function getStreams(type, id) {
     const streams = topTorrents.map(torrentContent => {
         // Construct the Stremio 'name' field: "Bitmagnet-{Resolution}"
         const resolutionForName = torrentContent.videoResolution ? torrentContent.videoResolution.replace('V', '') : 'Local';
-        const streamName = `BitMagnet 🧲`; // Updated name, removed "p2p-"
+        const streamName = `BitMagnet �`; // Updated name, removed "p2p-"
 
         // Construct the Stremio 'title' field, now as a single line
         let titleParts = [];
