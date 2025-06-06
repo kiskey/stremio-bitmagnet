@@ -35,7 +35,7 @@ The addon requires several environment variables for proper functioning. You can
 
     BITMAGNET_GRAPHQL_ENDPOINT: (Required) The URL of your BitMagnet GraphQL API endpoint.
 
-        Example: https://b.mjlan.duckdns.org/graphql
+        Example: https://b.duckdns.org/graphql     or http://bitmagnet:3333/graphql  or http://localhost:3333/graphql  (Based on your bitmagnet instance and its listening port in local)
 
     TMDB_API_KEY: (Required) Your API key for The Movie Database (TMDB). You can obtain one from TMDB API.
 
