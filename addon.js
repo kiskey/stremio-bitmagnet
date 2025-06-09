@@ -20,9 +20,9 @@ const bitMagnetCache = new NodeCache({ stdTTL: 900, checkperiod: 60 }); // Cache
 function getManifest() {
     return {
         id: 'org.bitmagnet.stremio.addon',
-        version: '1.0.0',
+        version: '4.0.0', // Updated version to 4.0.0
         name: 'BitMagnet Stremio Addon',
-        description: 'Stremio addon to find and prioritize torrents from BitMagnet GraphQL API, leveraging TMDB/IMDb for metadata.',
+        description: 'Stremio addon to find and prioritize torrents from BitMagnet GraphQL API, leveraging TMDB/IMDb for metadata and multi-level sorting.',
         resources: ['catalog', 'meta', 'stream'],
         types: ['movie', 'series'],
         catalogs: [
@@ -52,7 +52,6 @@ function getManifest() {
             // This is important if you want to provide high-quality streams without excessive buffering
             // By default, Stremio will proxy streams if this is not set.
             // Setting this to true means Stremio will attempt direct P2P connection via magnet link.
-            // This requires the Stremio client to have WebTorrent or a similar client integrated.
             // For details, see: [https://github.com/Stremio/stremio-addon-sdk/blob/master/docs/api/stream.md](https://github.com/Stremio/stremio-addon-sdk/blob/master/docs/api/stream.md)
             // "bittorrent": true // This is usually applied per stream, not globally in manifest.
         }
@@ -77,7 +76,7 @@ async function fetchCombinedMetadata(imdbId, type) {
 
     // Prioritize TMDB data if available and has a title/name
     if (tmdbData && (tmdbData.title || tmdbData.name)) {
-        console.log(`Metadata found (TMDB primary) for ${imdbId}).`); // Fixed: changed ) to }
+        console.log(`Metadata found (TMDB primary) for ${imdbId}).`);
         // Ensure TMDB data also has a 'year' property derived from its dates for consistency
         const tmdbYear = tmdbData.release_date ? parseInt(tmdbData.release_date.substring(0, 4), 10) :
                          (tmdbData.first_air_date ? parseInt(tmdbData.first_air_date.substring(0, 4), 10) : null);
@@ -86,7 +85,7 @@ async function fetchCombinedMetadata(imdbId, type) {
 
     // Fallback to OMDb data if TMDB failed or didn't provide enough info
     if (omdbData && omdbData.Title && omdbData.Response === 'True') {
-        console.log(`Metadata found (OMDb fallback) for ${imdbId}).`); // Fixed: changed ) to }
+        console.log(`Metadata found (OMDb fallback) for ${imdbId}).`);
         // Map OMDb data to a structure similar to TMDB for consistency
         let omdbYear = null;
         // Prioritize parsing from 'Released' field as it's a full date string, which is more reliable for exact year.
@@ -133,7 +132,7 @@ async function fetchCombinedMetadata(imdbId, type) {
         };
     }
 
-    console.warn(`No metadata found from TMDB or OMDb for ${imdbId}).`); // Fixed: changed ) to }
+    console.warn(`No metadata found from TMDB or OMDb for ${imdbId}).`);
     return null;
 }
 
@@ -458,6 +457,75 @@ function isLowQualityTorrent(torrentContent) {
     return false;
 }
 
+/**
+ * Determines if a torrent's language matches the preferred language.
+ * @param {object} torrentContent - The torrent content object from BitMagnet.
+ * @param {string} preferredLanguage - The preferred language code (e.g., 'eng', 'hin').
+ * @returns {boolean} True if the torrent contains the preferred language, false otherwise.
+ */
+function hasPreferredLanguage(torrentContent, preferredLanguage) {
+    if (!preferredLanguage || preferredLanguage.trim() === '') {
+        return false; // No preferred language set
+    }
+    const lowerPreferredLanguage = preferredLanguage.toLowerCase();
+    
+    // Check BitMagnet's `languages` array
+    if (torrentContent.languages && Array.isArray(torrentContent.languages)) {
+        if (torrentContent.languages.some(lang => lang.name.toLowerCase() === lowerPreferredLanguage)) {
+            return true;
+        }
+    }
+
+    // Fallback: Check torrent name for common language indicators
+    const torrentNameLower = torrentContent.torrent.name.toLowerCase();
+    // Common language tags in torrent names (can be expanded)
+    const languageKeywords = {
+        'english': ['eng', 'english', 'en'],
+        'hindi': ['hin', 'hindi'],
+        'tamil': ['tam', 'tamil'],
+        'telugu': ['tel', 'telugu'],
+        'malayalam': ['mal', 'malayalam'],
+        'kannada': ['kan', 'kannada'],
+        'french': ['fre', 'french', 'fr'],
+        'spanish': ['spa', 'spanish', 'es'],
+        'german': ['ger', 'german', 'de'],
+        'japanese': ['jpn', 'japanese', 'ja'],
+        'korean': ['kor', 'korean', 'ko'],
+        'mandarin': ['man', 'mandarin', 'cmn'],
+        'cantonese': ['can', 'cantonese', 'yue'],
+        'arabic': ['ara', 'arabic', 'ar'],
+        'russian': ['rus', 'russian', 'ru'],
+        'portuguese': ['por', 'portuguese', 'pt'],
+        'italian': ['ita', 'italian', 'it'],
+        'dutch': ['dut', 'dutch', 'nl'],
+        'swedish': ['swe', 'swedish', 'sv'],
+        'norwegian': ['nor', 'norwegian', 'no'],
+        'danish': ['dan', 'danish', 'da'],
+        'finnish': ['fin', 'finnish', 'fi'],
+        'polish': ['pol', 'polish', 'pl'],
+        'turkish': ['tur', 'turkish', 'tr'],
+        'thai': ['thi', 'thai', 'th'],
+        'vietnamese': ['vie', 'vietnamese', 'vi'],
+        'indonesian': ['ind', 'indonesian', 'id'],
+        'hebrew': ['heb', 'hebrew', 'he'],
+        'greek': ['gre', 'greek', 'el'],
+        'czech': ['cze', 'czech', 'cs'],
+        'hungarian': ['hun', 'hungarian', 'hu'],
+    };
+
+    const preferredLanguageAliases = languageKeywords[lowerPreferredLanguage] || [lowerPreferredLanguage];
+
+    for (const alias of preferredLanguageAliases) {
+        // Look for the alias as a standalone word or surrounded by common separators
+        const regex = new RegExp(`[\\s.\\[\\(-]${alias}[\\s.\\]\\)-]`, 'i');
+        if (torrentNameLower.includes(alias) || regex.test(torrentNameLower)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 
 /**
  * Handles stream requests.
@@ -663,7 +731,30 @@ async function getStreams(type, id) {
         return { streams: [] };
     }
 
-    // 6. Re-Sort by Quality Score (purely primary sort on this final list)
+    // Get preferred language from config (environment variable)
+    const preferredLanguage = (process.env.PREFERRED_LANGUAGE || '').toLowerCase(); // Ensure it's lowercase for comparison
+
+    // 6. Sort by Preferred Language (Pass 2)
+    // Torrents with preferred language come first, then others.
+    if (preferredLanguage) {
+        relevantTorrents.sort((a, b) => {
+            const aHasPreferredLanguage = hasPreferredLanguage(a, preferredLanguage);
+            const bHasPreferredLanguage = hasPreferredLanguage(b, preferredLanguage);
+
+            if (aHasPreferredLanguage && !bHasPreferredLanguage) {
+                return -1; // A comes before B
+            } else if (!aHasPreferredLanguage && bHasPreferredLanguage) {
+                return 1; // B comes before A
+            }
+            return 0; // Maintain original order (from seeders sort) if both/neither have preferred language
+        });
+        console.log(`Sorted by preferred language (${preferredLanguage}). First few:`, relevantTorrents.slice(0, 5).map(t => ({ name: t.torrent.name, hasPrefLang: hasPreferredLanguage(t, preferredLanguage), seeders: t.seeders })));
+    }
+
+
+    // 7. Re-Sort by Quality Score (Pass 3 - final sort)
+    // This re-sorts the list (which is already sorted by seeders and then by preferred language)
+    // to finally prioritize quality.
     relevantTorrents.sort((a, b) => {
         const scoreA = calculateQualityScore(a);
         const scoreB = calculateQualityScore(b);
@@ -672,7 +763,7 @@ async function getStreams(type, id) {
     console.log(`Final list re-sorted by quality. First few:`, relevantTorrents.slice(0, 5).map(t => ({ name: t.torrent.name, score: calculateQualityScore(t), seeders: t.seeders })));
 
 
-    // 7. Limit results to a configurable number
+    // 8. Limit results to a configurable number
     const maxStreams = parseInt(config.MAX_STREAMS_PER_ITEM, 10) || 10; // Default to 10 if not set or invalid
     const topTorrents = relevantTorrents.slice(0, maxStreams);
 
