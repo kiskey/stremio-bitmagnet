@@ -21,7 +21,7 @@ function getManifest() {
     return {
         id: 'org.bitmagnet.stremio.addon',
         version: '1.0.0',
-        name: 'BitMagnet P2P',
+        name: 'BitMagnet Stremio Addon',
         description: 'Stremio addon to find and prioritize torrents from BitMagnet GraphQL API, leveraging TMDB/IMDb for metadata.',
         resources: ['catalog', 'meta', 'stream'],
         types: ['movie', 'series'],
@@ -548,16 +548,22 @@ async function getStreams(type, id) {
         console.error(`Error in broad BitMagnet search for "${broadQueryString}":`, error.message);
     }
 
-    // Strategy 2: Fallback with Year Filter (only if no results from broad search, or if year was available and valid)
-    // This provides a more precise search if the broad one fails and we have a reliable year.
-    if (bitMagnetResults.length === 0 && yearForSearch !== null && !isNaN(yearForSearch)) {
+    // Strategy 2: Fallback (only if no results from broad search)
+    // For movies, if year is available, still try with year filter in fallback.
+    // For series, the fallbackReleaseYear remains null, as per the user's request.
+    if (bitMagnetResults.length === 0) {
+        let fallbackReleaseYear = null;
+        if (type === 'movie' && yearForSearch !== null && !isNaN(yearForSearch)) {
+            fallbackReleaseYear = yearForSearch;
+        }
+
         try {
             const fallbackResults = await searchBitMagnet({
-                queryString: baseContentTitle, // Just the title
-                releaseYear: yearForSearch, // Use the specific year filter
+                queryString: baseContentTitle,
+                releaseYear: fallbackReleaseYear, // Apply conditional year filter based on type
                 contentType: type === 'movie' ? 'movie' : 'tv_show',
             });
-            console.log(`Fallback search for "${baseContentTitle}" with year ${yearForSearch} found ${fallbackResults.length} results.`);
+            console.log(`Fallback search for "${baseContentTitle}" with year ${fallbackReleaseYear || 'None'} found ${fallbackResults.length} results.`);
             fallbackResults.forEach(item => {
                 if (!seenInfoHashes.has(item.infoHash)) {
                     bitMagnetResults.push(item);
@@ -565,7 +571,7 @@ async function getStreams(type, id) {
                 }
             });
         } catch (error) {
-            console.error(`Error in fallback BitMagnet search for "${baseContentTitle}" (${yearForSearch}):`, error.message);
+            console.error(`Error in fallback BitMagnet search for "${baseContentTitle}" (${fallbackReleaseYear || 'no year'}):`, error.message);
         }
     }
     
