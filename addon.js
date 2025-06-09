@@ -20,32 +20,12 @@ const bitMagnetCache = new NodeCache({ stdTTL: 900, checkperiod: 60 }); // Cache
 function getManifest() {
     return {
         id: 'org.bitmagnet.stremio.addon',
-        version: '4.0.0', // Updated version to 4.0.0
+        version: '4.0.1', // Updated version to 4.0.1
         name: 'BitMagnet Stremio Addon',
         description: 'Stremio addon to find and prioritize torrents from BitMagnet GraphQL API, leveraging TMDB/IMDb for metadata and multi-level sorting.',
-        resources: ['catalog', 'meta', 'stream'],
+        resources: ['meta', 'stream'], // Removed 'catalog' from resources
         types: ['movie', 'series'],
-        catalogs: [
-            {
-                type: 'movie',
-                id: 'bitmagnet_movies',
-                name: 'BitMagnet Movies',
-                extra: [
-                    { name: 'search', is
-                    : true },
-                    { name: 'genre', isSelectable: true, options: ['Action', 'Adventure', 'Animation', 'Comedy', 'Crime', 'Documentary', 'Drama', 'Family', 'Fantasy', 'History', 'Horror', 'Music', 'Mystery', 'Romance', 'Science Fiction', 'TV Movie', 'Thriller', 'War', 'Western'] }
-                ]
-            },
-            {
-                type: 'series',
-                id: 'bitmagnet_series',
-                name: 'BitMagnet Series',
-                extra: [
-                    { name: 'search', is: true },
-                    { name: 'genre', isSelectable: true, options: ['Action & Adventure', 'Animation', 'Comedy', 'Crime', 'Documentary', 'Drama', 'Family', 'Kids', 'Mystery', 'News', 'Reality', 'Sci-Fi & Fantasy', 'Soap', 'Talk', 'War & Politics', 'Western'] }
-                ]
-            }
-        ],
+        catalogs: [], // Removed catalog definitions, now an empty array
         idPrefixes: ['tt'], // Indicates support for IMDb IDs
         behaviorHints: {
             p2p: true, // Explicitly tell Stremio this addon provides P2P content.
